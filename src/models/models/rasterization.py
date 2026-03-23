@@ -99,7 +99,7 @@ class GaussianSplatRenderer(nn.Module):
         self,
         feature_dim: int = 256,       # Output channels of gs_feat_head
         sh_degree: int = 0,
-        enable_prune: bool = True,
+        enable_prune: bool = False,
         voxel_size: float = 0.002,    # Default voxel size for prune_gs
         enable_conf_filter: bool = False,  # Enable confidence filtering
         conf_threshold_percent: float = 30.0,  # Confidence threshold percentage
@@ -201,12 +201,14 @@ class GaussianSplatRenderer(nn.Module):
             splats = self.prepare_splats(views, predictions, images, gs_params, S, position_from="gsdepth+predcamera")
 
         # Apply confidence filtering before pruning
+        splat_counts = None
         if self.enable_conf_filter and "gs_depth_conf" in predictions:
-            splats = self.apply_confidence_filter(splats, predictions["gs_depth_conf"])
-        
+            splats, splat_counts = self.apply_confidence_filter(splats, predictions["gs_depth_conf"])
+            predictions["splat_counts"] = splat_counts
+
         if self.enable_prune:
             splats = self.prune_gs(splats, voxel_size=self.voxel_size)
-        
+
         predictions["splats"] = splats
         if is_inference:
             return predictions
@@ -255,12 +257,12 @@ class GaussianSplatRenderer(nn.Module):
     def apply_confidence_filter(self, splats, gs_depth_conf):
         """
         Apply confidence filtering to Gaussian splats before pruning.
-        Discard bottom p% confidence points, keep top (100-p)%.
-        
+        Use per-view thresholding to maintain pixel alignment.
+
         Args:
             splats: Dictionary containing Gaussian parameters
             gs_depth_conf: Confidence tensor [B, S, H, W]
-        
+
         Returns:
             Filtered splats dictionary
         """
@@ -269,41 +271,46 @@ class GaussianSplatRenderer(nn.Module):
 
         device = splats["means"].device
         B, N = splats["means"].shape[:2]
+        S, H, W = gs_depth_conf.shape[1], gs_depth_conf.shape[2], gs_depth_conf.shape[3]
+        splats_per_view = H * W
 
-        # Flatten confidence: [B, S, H, W] -> [B, N]
-        conf = gs_depth_conf.flatten(1).to(device)
-        # Mask invalid/very small values
-        conf = conf.masked_fill(conf <= 1e-5, float("-inf"))
+        # Apply filtering per view to maintain pixel alignment
+        all_masks = []
+        for view_idx in range(S):
+            # Get confidence for this view: [B, H, W] -> [B, H*W]
+            conf_view = gs_depth_conf[:, view_idx, :, :].flatten(1).to(device)
+            conf_view = conf_view.masked_fill(conf_view <= 1e-5, float("-inf"))
 
-        # Keep top (100-p)% points, discard bottom p%
-        if self.conf_threshold_percent > 0:
-            keep_from_percent = int(np.ceil(N * (100.0 - self.conf_threshold_percent) / 100.0))
-        else:
-            keep_from_percent = N
-        K = max(1, min(self.max_gaussians, keep_from_percent))
+            # Compute threshold for this view
+            if self.conf_threshold_percent > 0:
+                threshold = torch.quantile(conf_view, self.conf_threshold_percent / 100.0, dim=1, keepdim=True)
+                mask_view = conf_view >= threshold
+            else:
+                mask_view = torch.ones_like(conf_view, dtype=torch.bool)
 
-        # Select top-K indices for each batch (deterministic, no randomness)
-        topk_idx = torch.topk(conf, K, dim=1, largest=True, sorted=False).indices  # [B, K]
-        
+            all_masks.append(mask_view)
+
+        # Concatenate masks for all views: [B, S*H*W]
+        mask = torch.cat(all_masks, dim=1)
+
+        # Compute splat counts per view for accurate slicing later
+        splat_counts = [mask_view.sum().item() for mask_view in all_masks]
+
         filtered = {}
         mask_keys = ["means", "quats", "scales", "opacities", "sh", "weights"]
-        
+
         for key in splats.keys():
             if key in mask_keys and key in splats:
                 x = splats[key]
                 if x.ndim == 2:  # [B, N]
-                    filtered[key] = torch.gather(x, 1, topk_idx)
+                    filtered[key] = x[mask]  # Apply mask directly
                 else:
-                    # Expand indices to match tensor dimensions
-                    expand_idx = topk_idx.clone()
-                    for i in range(x.ndim - 2):
-                        expand_idx = expand_idx.unsqueeze(-1)
-                    expand_idx = expand_idx.expand(-1, -1, *x.shape[2:])
-                    filtered[key] = torch.gather(x, 1, expand_idx)
+                    # For higher dimensional tensors, apply mask along the N dimension
+                    filtered[key] = x[mask.unsqueeze(-1).expand_as(x)]
             else:
                 filtered[key] = splats[key]
 
-        return filtered
+        return filtered, splat_counts
 
     def prune_gs(self, splats, voxel_size=0.002):
         """

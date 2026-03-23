@@ -126,12 +126,12 @@ def main():
     parser.add_argument("--apply_edge_mask", action="store_true", default=True, help="Apply edge-based filtering")
     parser.add_argument("--apply_sky_mask", action="store_true", default=False, help="Apply sky mask filtering")
     # Save flags
-    parser.add_argument("--save_pointmap", action="store_true", default=True, help="Save points PLY")
-    parser.add_argument("--save_depth", action="store_true", default=True, help="Save depth PNG")
-    parser.add_argument("--save_normal", action="store_true", default=True, help="Save normal PNG")
+    parser.add_argument("--save_pointmap", action="store_true", default=False, help="Save points PLY")
+    parser.add_argument("--save_depth", action="store_true", default=False, help="Save depth PNG")
+    parser.add_argument("--save_normal", action="store_true", default=False, help="Save normal PNG")
     parser.add_argument("--save_gs", action="store_true", default=True, help="Save Gaussians PLY")
     parser.add_argument("--save_rendered", action="store_true", default=True, help="Save rendered video")
-    parser.add_argument("--save_colmap", action="store_true", default=True, help="Save COLMAP sparse")
+    parser.add_argument("--save_colmap", action="store_true", default=False, help="Save COLMAP sparse")
     # Conditioning flags
     parser.add_argument("--cond_pose", action="store_true", help="Use camera pose conditioning if available")
     parser.add_argument("--cond_intrinsics", action="store_true", help="Use intrinsics conditioning if available")
@@ -346,7 +346,12 @@ def main():
         quats = predictions["splats"]["quats"][0].reshape(-1, 4)
         colors = (predictions["splats"]["sh"][0] if "sh" in predictions["splats"] else predictions["splats"]["colors"][0]).reshape(-1, 3)
         opacities = predictions["splats"]["opacities"][0].reshape(-1)
-        
+
+        print(f"  - Total splats after processing: {len(means)}")
+        print(f"  - Expected splats per view (H*W): {H * W}")
+        print(f"  - Number of views: {S}")
+        print(f"  - Total expected without filtering: {S * H * W}")
+
         # Save Gaussian PLY
         ply_path = outdir / "gaussians.ply"
         save_gs_ply(
@@ -357,6 +362,67 @@ def main():
             colors,
             opacities,
         )
+
+        # Save individual view splats
+        # Use actual per-view counts from confidence filtering
+        if "splat_counts" in predictions:
+            splat_counts = predictions["splat_counts"]
+            print(f"  - Per-view splat counts after filtering: {splat_counts}")
+
+            start = 0
+            for i in range(S):
+                count = splat_counts[i]
+                end = start + count
+
+                means_i = means[start:end]
+                scales_i = scales[start:end]
+                quats_i = quats[start:end]
+                colors_i = colors[start:end]
+                opacities_i = opacities[start:end]
+
+                print(f"    - View {i}: {count} splats")
+
+                ply_path = outdir / f"splats_view_{i}.ply"
+                save_gs_ply(
+                    ply_path,
+                    means_i,
+                    scales_i,
+                    quats_i,
+                    colors_i,
+                    opacities_i,
+                )
+                print(f"  - Saved view {i} splats to {ply_path}")
+                start = end
+        else:
+            # Fallback to approximation if counts not available
+            splats_per_view = len(means) // S
+            print(f"  - No splat counts available, using approximation: {splats_per_view} per view")
+
+            for i in range(S):
+                start = i * splats_per_view
+                if i == S - 1:
+                    end = len(means)
+                else:
+                    end = (i + 1) * splats_per_view
+
+                means_i = means[start:end]
+                scales_i = scales[start:end]
+                quats_i = quats[start:end]
+                colors_i = colors[start:end]
+                opacities_i = opacities[start:end]
+
+                print(f"    - View {i}: {len(means_i)} splats")
+
+                ply_path = outdir / f"splats_view_{i}.ply"
+                save_gs_ply(
+                    ply_path,
+                    means_i,
+                    scales_i,
+                    quats_i,
+                    colors_i,
+                    opacities_i,
+                )
+                print(f"  - Saved view {i} splats to {ply_path}")
 
         # Render video using the same filtered splats from predictions
         num_views = S
