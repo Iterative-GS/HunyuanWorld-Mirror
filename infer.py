@@ -206,6 +206,15 @@ def main():
     cond_flags = [0, 0, 0]
     print(f"📸 Loaded {S} images with shape {imgs.shape}")
 
+    # Save camera parameters for rendering script
+    from src.utils.save_utils import save_camera_params
+    save_camera_params(
+        predictions["camera_poses"][0].detach().cpu().numpy(),
+        predictions["camera_intrs"][0].detach().cpu().numpy(),
+        outdir
+    )
+    print(f"📷 Saved camera parameters to {outdir}/camera_params.json")
+
     # 4) Inference
     print("\n🚀 Starting inference pipeline...")
     start_time = time.time()

@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""
+Cumulative Rendering Script for HunyuanWorld-Mirror
+
+This script takes the output directory from infer.py and creates cumulative renders:
+- Load splats for view 0, render for view 0
+- Load splats for view 1, concatenate to view 0 splats, render for views 0 and 1
+- And so on...
+
+Usage:
+    python cumulative_render.py /path/to/infer_output /path/to/render_output
+"""
+
+import argparse
+import json
+import os
+from pathlib import Path
+
+import numpy as np
+import torch
+from PIL import Image
+from plyfile import PlyData
+
+from src.models.models.worldmirror import WorldMirror
+from src.utils.save_utils import save_image_png
+from src.models.utils.sh_utils import RGB2SH
+
+
+def load_splats_from_ply(ply_path):
+    """
+    Load Gaussian splats from PLY file and convert to tensor format expected by rasterizer.
+
+    Args:
+        ply_path: Path to PLY file
+
+    Returns:
+        Dictionary with splat tensors in format expected by rasterize_batches
+    """
+    # Load PLY data
+    plydata = PlyData.read(ply_path)
+    vert = plydata["vertex"]
+
+    # Extract data and convert back to tensor format
+    means = torch.tensor(np.column_stack([vert["x"], vert["y"], vert["z"]]), dtype=torch.float32)
+    colors = torch.tensor(np.column_stack([vert["f_dc_0"], vert["f_dc_1"], vert["f_dc_2"]]), dtype=torch.float32)
+    opacities = torch.tensor(vert["opacity"], dtype=torch.float32)
+    scales = torch.exp(torch.tensor(np.column_stack([vert["scale_0"], vert["scale_1"], vert["scale_2"]]), dtype=torch.float32))
+    quats = torch.tensor(np.column_stack([vert["rot_0"], vert["rot_1"], vert["rot_2"], vert["rot_3"]]), dtype=torch.float32)
+
+    # Convert RGB colors back to SH coefficients (as stored in prepare_splats)
+    sh = RGB2SH(colors).unsqueeze(1)  # [N, 1, 3]
+
+    return {
+        "means": means.unsqueeze(0),      # [1, N, 3]
+        "quats": quats.unsqueeze(0),      # [1, N, 4]
+        "scales": scales.unsqueeze(0),    # [1, N, 3]
+        "opacities": opacities.unsqueeze(0), # [1, N]
+        "sh": sh.unsqueeze(0)             # [1, N, 1, 3]
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Cumulative rendering for HunyuanWorld-Mirror")
+    parser.add_argument("infer_dir", type=str, help="Path to infer.py output directory")
+    parser.add_argument("render_dir", type=str, help="Path to save cumulative renders")
+    args = parser.parse_args()
+
+    infer_dir = Path(args.infer_dir)
+    render_dir = Path(args.render_dir)
+    render_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"📂 Loading from: {infer_dir}")
+    print(f"📂 Saving to: {render_dir}")
+
+    # Load camera parameters
+    cam_params_path = infer_dir / "camera_params.json"
+    if not cam_params_path.exists():
+        raise FileNotFoundError(f"Camera parameters not found: {cam_params_path}")
+
+    with open(cam_params_path) as f:
+        cam_data = json.load(f)
+
+    extrinsics = [torch.tensor(cam["matrix"], dtype=torch.float32) for cam in cam_data["extrinsics"]]
+    intrinsics = [torch.tensor(cam["matrix"], dtype=torch.float32) for cam in cam_data["intrinsics"]]
+    num_views = len(extrinsics)
+
+    print(f"📷 Loaded {num_views} camera parameters")
+
+    # Get H, W from first resized image
+    images_resized_dir = infer_dir / "images_resized"
+    if not images_resized_dir.exists():
+        raise FileNotFoundError(f"Images directory not found: {images_resized_dir}")
+
+    first_image = next(images_resized_dir.glob("*.png"))
+    img = Image.open(first_image)
+    H, W = img.height, img.width
+    print(f"📐 Image dimensions: {W} x {H}")
+
+    # Load model for rendering
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = WorldMirror.from_pretrained("tencent/HunyuanWorld-Mirror").to(device)
+    gs_renderer = model.gs_renderer
+
+    print("🎨 Starting cumulative rendering...")
+
+    for i in range(num_views):
+        print(f"\n🔄 Processing cumulative views 0-{i}")
+
+        # Load splats for views 0 to i
+        all_splats = []
+        for j in range(i + 1):
+            ply_path = infer_dir / f"splats_view_{j}.ply"
+            if not ply_path.exists():
+                raise FileNotFoundError(f"Splat file not found: {ply_path}")
+
+            splats_j = load_splats_from_ply(ply_path)
+            all_splats.append(splats_j)
+            print(f"  📄 Loaded splats_view_{j}.ply: {splats_j['means'].shape[1]} splats")
+
+        # Concatenate splats along the N dimension (dim=1)
+        combined_splats = {
+            "means": torch.cat([s["means"] for s in all_splats], dim=1),
+            "quats": torch.cat([s["quats"] for s in all_splats], dim=1),
+            "scales": torch.cat([s["scales"] for s in all_splats], dim=1),
+            "opacities": torch.cat([s["opacities"] for s in all_splats], dim=1),
+            "sh": torch.cat([s["sh"] for s in all_splats], dim=1),
+        }
+
+        total_splats = combined_splats["means"].shape[1]
+        print(f"  🔗 Combined splats: {total_splats} total")
+
+        # Prepare cameras for views 0 to i
+        viewmats = torch.stack(extrinsics[:i+1]).unsqueeze(0).to(device)  # [1, i+1, 4, 4]
+        Ks = torch.stack(intrinsics[:i+1]).unsqueeze(0).to(device)        # [1, i+1, 3, 3]
+
+        # Render using the same call as render_interpolated_video
+        with torch.no_grad():
+            colors, depths, _ = gs_renderer.rasterizer.rasterize_batches(
+                combined_splats["means"], combined_splats["quats"], combined_splats["scales"],
+                combined_splats["opacities"], combined_splats["sh"],
+                viewmats, Ks, width=W, height=H, sh_degree=0
+            )
+
+        # Save renders for each camera
+        for cam_idx in range(i + 1):
+            rgb_tensor = colors[0, cam_idx].permute(2, 0, 1)  # [3, H, W]
+            render_path = render_dir / f"cumulative_view_{i}_cam_{cam_idx}.png"
+            save_image_png(render_path, rgb_tensor)
+            print(f"  💾 Saved: {render_path}")
+
+    print("\n✅ Cumulative rendering complete!")
+    print(f"📂 Renders saved to: {render_dir}")
+
+
+if __name__ == "__main__":
+    main()
