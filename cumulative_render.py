@@ -61,8 +61,10 @@ def load_splats_from_ply(ply_path):
 
 def main():
     parser = argparse.ArgumentParser(description="Cumulative rendering for HunyuanWorld-Mirror")
-    parser.add_argument("infer_dir", type=str, help="Path to infer.py output directory")
-    parser.add_argument("render_dir", type=str, help="Path to save cumulative renders")
+    parser.add_argument("--infer_dir", type=str, help="Path to infer.py output directory")
+    parser.add_argument("--render_dir", type=str, help="Path to save cumulative renders")
+    parser.add_argument("--height", type=int, help="Height of the rendered images")
+    parser.add_argument("--width", type=int, help="Width of the rendered images")
     args = parser.parse_args()
 
     infer_dir = Path(args.infer_dir)
@@ -86,14 +88,7 @@ def main():
 
     print(f"📷 Loaded {num_views} camera parameters")
 
-    # Get H, W from first resized image
-    images_resized_dir = infer_dir / "images_resized"
-    if not images_resized_dir.exists():
-        raise FileNotFoundError(f"Images directory not found: {images_resized_dir}")
-
-    first_image = next(images_resized_dir.glob("*.png"))
-    img = Image.open(first_image)
-    H, W = img.height, img.width
+    H,W=args.height, args.width
     print(f"📐 Image dimensions: {W} x {H}")
 
     # Load model for rendering
