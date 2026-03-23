@@ -207,13 +207,6 @@ def main():
     print(f"📸 Loaded {S} images with shape {imgs.shape}")
 
     # Save camera parameters for rendering script
-    from src.utils.save_utils import save_camera_params
-    save_camera_params(
-        predictions["camera_poses"][0].detach().cpu().numpy(),
-        predictions["camera_intrs"][0].detach().cpu().numpy(),
-        outdir
-    )
-    print(f"📷 Saved camera parameters to {outdir}/camera_params.json")
 
     # 4) Inference
     print("\n🚀 Starting inference pipeline...")
@@ -227,7 +220,13 @@ def main():
         with torch.amp.autocast('cuda', enabled=bool(use_amp), dtype=amp_dtype):
             predictions = model(views=views, cond_flags=cond_flags)  # Multi-modal inference with priors
     print(f"🕒 Inference time: {time.time() - start_time:.3f} seconds")
-    
+    from src.utils.save_utils import save_camera_params
+    save_camera_params(
+        predictions["camera_poses"][0].detach().cpu().numpy(),
+        predictions["camera_intrs"][0].detach().cpu().numpy(),
+        outdir
+    )
+    print(f"📷 Saved camera parameters to {outdir}/camera_params.json")
     # 4.5) Sky mask segmentation (if needed)
     sky_mask = None
     if args.apply_sky_mask:
