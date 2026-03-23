@@ -187,6 +187,8 @@ def main():
     
     elif input_path.is_dir():
         # Case 2: Directory of images
+        input_frames_dir = outdir / "input_frames"
+        input_frames_dir.mkdir(exist_ok=True)
         print(f"📁 Processing directory: {input_path}")
         img_paths = select_frames_from_dl3dv(str(input_path), n=15, output_dir=str(input_frames_dir))
         if not img_paths:
