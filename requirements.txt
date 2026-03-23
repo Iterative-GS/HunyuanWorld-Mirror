@@ -13,12 +13,15 @@ pytest
 numpy<2.0.0
 trimesh
 roma
-open3d==0.18.0
+open3d
 einops
 gradio
 matplotlib
+pandas
+pytz 
+python-dateutil
 tqdm
-opencv-python
+opencv-python-headless
 viser
 pillow_heif
 scipy
@@ -31,3 +34,4 @@ moviepy==1.0.3
 plyfile
 pycolmap==3.10.0
 tyro
+onnxruntime
