@@ -22,6 +22,7 @@ from src.utils.render_utils import render_interpolated_video
 
 from src.utils.build_pycolmap_recon import build_pycolmap_reconstruction
 from src.models.utils.camera_utils import vector_to_camera_matrices
+from src.models.utils.sh_utils import SH2RGB
 
 # Import mask computation utilities
 from src.utils.geometry import depth_edge, normals_edge
@@ -352,7 +353,12 @@ def main():
         means = predictions["splats"]["means"][0].reshape(-1, 3)
         scales = predictions["splats"]["scales"][0].reshape(-1, 3)
         quats = predictions["splats"]["quats"][0].reshape(-1, 4)
-        colors = (predictions["splats"]["sh"][0] if "sh" in predictions["splats"] else predictions["splats"]["colors"][0]).reshape(-1, 3)
+        if "sh" in predictions["splats"]:
+            # Extract DC SH component and convert to RGB for PLY visualization
+            dc_sh = predictions["splats"]["sh"][0][:, 0, :]  # [N, 3]
+            colors = SH2RGB(dc_sh)  # [N, 3] RGB
+        else:
+            colors = predictions["splats"]["colors"][0]  # [N, 3]
         opacities = predictions["splats"]["opacities"][0].reshape(-1)
 
         print(f"  - Total splats after processing: {len(means)}")
