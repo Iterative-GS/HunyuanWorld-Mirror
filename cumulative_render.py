@@ -159,7 +159,8 @@ def main():
 
     # Load model for rendering
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    gs_renderer = GaussianSplatRenderer().to(device)
+    model = WorldMirror.from_pretrained("tencent/HunyuanWorld-Mirror").to(device)
+    gs_renderer = model.gs_renderer
 
     print("🎨 Starting cumulative rendering...")
 
