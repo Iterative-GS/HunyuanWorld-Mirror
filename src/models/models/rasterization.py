@@ -102,7 +102,7 @@ class GaussianSplatRenderer(nn.Module):
         enable_prune: bool = False,
         voxel_size: float = 0.002,    # Default voxel size for prune_gs
         enable_conf_filter: bool = False,  # Enable confidence filtering
-        conf_threshold_percent: float = 10.0,  # Confidence threshold percentage
+        conf_threshold_percent: float = 30.0,  # Confidence threshold percentage
         max_gaussians: int = 5000000,  # Maximum number of Gaussians
     ):
         super().__init__()
