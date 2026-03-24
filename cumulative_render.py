@@ -113,7 +113,7 @@ def load_splats_from_exr(exr_zip_path):
             quats_flat = quats.reshape(N, 4)
             scales_flat = scales.reshape(N, 3)
             opacities_flat = opacities.reshape(N)
-            sh_flat = sh.reshape(N, 3).unsqueeze(1)  # N x 1 x 3
+            sh_flat = sh.reshape(N, 3)
 
             # Convert to torch
             return {
@@ -121,7 +121,7 @@ def load_splats_from_exr(exr_zip_path):
                 "quats": torch.tensor(quats_flat, dtype=torch.float32).unsqueeze(0),      # [1, N, 4]
                 "scales": torch.tensor(scales_flat, dtype=torch.float32).unsqueeze(0),    # [1, N, 3]
                 "opacities": torch.tensor(opacities_flat, dtype=torch.float32).unsqueeze(0), # [1, N]
-                "sh": torch.tensor(sh_flat, dtype=torch.float32).unsqueeze(0)             # [1, N, 1, 3]
+                "sh": torch.tensor(sh_flat, dtype=torch.float32).unsqueeze(1).unsqueeze(0)  # [1, N, 1, 3]
             }
 
 
