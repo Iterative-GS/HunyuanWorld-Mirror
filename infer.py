@@ -120,7 +120,7 @@ def main():
     parser.add_argument("--target_size", type=int, default=518, help="Target size for image resizing")
     parser.add_argument("--write_txt", action="store_true", help="Also write human-readable COLMAP txt (slow, huge)")
     # Mask filtering parameters
-    parser.add_argument("--confidence_percentile", type=float, default=10.0, help="Confidence percentile threshold for filtering (0-100, filters bottom X percent)")
+    parser.add_argument("--confidence_percentile", type=float, default=5.0, help="Confidence percentile threshold for filtering (0-100, filters bottom X percent)")
     parser.add_argument("--edge_normal_threshold", type=float, default=5.0, help="Normal angle threshold in degrees for edge detection")
     parser.add_argument("--edge_depth_threshold", type=float, default=0.03, help="Relative depth threshold for edge detection")
     parser.add_argument("--apply_confidence_mask", action="store_true", default=True, help="Apply confidence-based filtering")
@@ -370,61 +370,117 @@ def main():
         )
 
         # Save individual view splats
-        # Divide total splats into S equal parts, assuming uniform filtering
-        splats_per_view = len(means) // S
-        print(f"  - Dividing {len(means)} splats into {S} equal parts: {splats_per_view} per view")
+        # Use actual per-view counts from confidence filtering
+        if "splat_counts" in predictions:
+            splat_counts = predictions["splat_counts"]
+            print(f"  - Per-view splat counts after filtering: {splat_counts}")
 
-        for i in range(S):
-            # compute mask for view i
-            pts3d_conf_i = predictions["pts3d_conf"][0, i:i+1]  # [1, H, W]
-            depth_preds_i = predictions["depth"][0, i:i+1]  # [1, H, W, 1]
-            normal_preds_i = predictions["normals"][0, i:i+1]  # [1, H, W, 3]
-            sky_mask_i = sky_mask[i:i+1]  # [1, H, W]
-            mask_i = create_filter_mask(
-                pts3d_conf=pts3d_conf_i.detach().cpu().numpy(),
-                depth_preds=depth_preds_i.detach().cpu().numpy(),
-                normal_preds=normal_preds_i.detach().cpu().numpy(),
-                sky_mask=sky_mask_i,
-                confidence_percentile=args.confidence_percentile,
-                edge_normal_threshold=args.edge_normal_threshold,
-                edge_depth_threshold=args.edge_depth_threshold,
-                apply_confidence_mask=args.apply_confidence_mask,
-                apply_edge_mask=args.apply_edge_mask,
-                apply_sky_mask=args.apply_sky_mask,
-            )[0]  # [H, W]
+            start = 0
+            for i in range(S):
+                # compute mask for view i
+                pts3d_conf_i = predictions["pts3d_conf"][0, i:i+1]  # [1, H, W]
+                depth_preds_i = predictions["depth"][0, i:i+1]  # [1, H, W, 1]
+                normal_preds_i = predictions["normals"][0, i:i+1]  # [1, H, W, 3]
+                sky_mask_i = sky_mask[i:i+1]  # [1, H, W]
+                mask_i = create_filter_mask(
+                    pts3d_conf=pts3d_conf_i.detach().cpu().numpy(),
+                    depth_preds=depth_preds_i.detach().cpu().numpy(),
+                    normal_preds=normal_preds_i.detach().cpu().numpy(),
+                    sky_mask=sky_mask_i,
+                    confidence_percentile=args.confidence_percentile,
+                    edge_normal_threshold=args.edge_normal_threshold,
+                    edge_depth_threshold=args.edge_depth_threshold,
+                    apply_confidence_mask=args.apply_confidence_mask,
+                    apply_edge_mask=args.apply_edge_mask,
+                    apply_sky_mask=args.apply_sky_mask,
+                )[0]  # [H, W]
 
-            start = i * splats_per_view
-            if i == S - 1:
-                end = len(means)
-            else:
-                end = (i + 1) * splats_per_view
+                count = splat_counts[i]
+                end = start + count
 
-            means_i = means[start:end]
-            scales_i = scales[start:end]
-            quats_i = quats[start:end]
-            colors_i = colors[start:end]
-            opacities_i = opacities[start:end]
+                means_i = means[start:end]
+                scales_i = scales[start:end]
+                quats_i = quats[start:end]
+                colors_i = colors[start:end]
+                opacities_i = opacities[start:end]
 
-            # Apply mask
-            mask_i_flat = mask_i.flatten()[:len(means_i)]
-            means_i = means_i[mask_i_flat]
-            scales_i = scales_i[mask_i_flat]
-            quats_i = quats_i[mask_i_flat]
-            colors_i = colors_i[mask_i_flat]
-            opacities_i = opacities_i[mask_i_flat]
+                # Apply mask
+                mask_i_flat = mask_i.flatten()[:len(means_i)]
+                means_i = means_i[mask_i_flat]
+                scales_i = scales_i[mask_i_flat]
+                quats_i = quats_i[mask_i_flat]
+                colors_i = colors_i[mask_i_flat]
+                opacities_i = opacities_i[mask_i_flat]
 
-            print(f"    - View {i}: {len(means_i)} splats (from {end - start} available)")
+                print(f"    - View {i}: {len(means_i)} splats")
 
-            ply_path = outdir / f"splats_view_{i}.ply"
-            save_gs_ply(
-                ply_path,
-                means_i,
-                scales_i,
-                quats_i,
-                colors_i,
-                opacities_i,
-            )
-            print(f"  - Saved view {i} splats to {ply_path}")
+                ply_path = outdir / f"splats_view_{i}.ply"
+                save_gs_ply(
+                    ply_path,
+                    means_i,
+                    scales_i,
+                    quats_i,
+                    colors_i,
+                    opacities_i,
+                )
+                print(f"  - Saved view {i} splats to {ply_path}")
+                start = end
+        else:
+            # Fallback to approximation if counts not available
+            splats_per_view = len(means) // S
+            print(f"  - No splat counts available, using approximation: {splats_per_view} per view")
+
+            for i in range(S):
+                # compute mask for view i
+                pts3d_conf_i = predictions["pts3d_conf"][0, i:i+1]  # [1, H, W]
+                depth_preds_i = predictions["depth"][0, i:i+1]  # [1, H, W, 1]
+                normal_preds_i = predictions["normals"][0, i:i+1]  # [1, H, W, 3]
+                sky_mask_i = sky_mask[i:i+1]  # [1, H, W]
+                mask_i = create_filter_mask(
+                    pts3d_conf=pts3d_conf_i.detach().cpu().numpy(),
+                    depth_preds=depth_preds_i.detach().cpu().numpy(),
+                    normal_preds=normal_preds_i.detach().cpu().numpy(),
+                    sky_mask=sky_mask_i,
+                    confidence_percentile=args.confidence_percentile,
+                    edge_normal_threshold=args.edge_normal_threshold,
+                    edge_depth_threshold=args.edge_depth_threshold,
+                    apply_confidence_mask=args.apply_confidence_mask,
+                    apply_edge_mask=args.apply_edge_mask,
+                    apply_sky_mask=args.apply_sky_mask,
+                )[0]  # [H, W]
+
+                start = i * splats_per_view
+                if i == S - 1:
+                    end = len(means)
+                else:
+                    end = (i + 1) * splats_per_view
+
+                means_i = means[start:end]
+                scales_i = scales[start:end]
+                quats_i = quats[start:end]
+                colors_i = colors[start:end]
+                opacities_i = opacities[start:end]
+
+                # Apply mask
+                mask_i_flat = mask_i.flatten()[:len(means_i)]
+                means_i = means_i[mask_i_flat]
+                scales_i = scales_i[mask_i_flat]
+                quats_i = quats_i[mask_i_flat]
+                colors_i = colors_i[mask_i_flat]
+                opacities_i = opacities_i[mask_i_flat]
+
+                print(f"    - View {i}: {len(means_i)} splats")
+
+                ply_path = outdir / f"splats_view_{i}.ply"
+                save_gs_ply(
+                    ply_path,
+                    means_i,
+                    scales_i,
+                    quats_i,
+                    colors_i,
+                    opacities_i,
+                )
+                print(f"  - Saved view {i} splats to {ply_path}")
 
         # Render video using the same filtered splats from predictions
         num_views = S
