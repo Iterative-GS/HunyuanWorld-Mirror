@@ -348,80 +348,77 @@ def main():
         print(f"  - Saved {S} normal maps to {normal_dir}")
 
         # Save Gaussians as EXR zips and render video
-    if "splats" in predictions and args.save_gs:
-        # Save unfiltered splats in pixel-aligned ZIP format + pre-computed masks
-        splats_per_view = H * W
+    if "splats" in predictions:
+        filtered_splats = predictions["splats"]
+        if isinstance(filtered_splats["means"], list):
+            filtered_splats = {k: torch.stack(v) for k, v in filtered_splats.items()}
 
-        print(f"  - Total splats per view (H*W): {splats_per_view}")
-        print(f"  - Number of views: {S}")
+        if args.save_gs:
+            # Save unfiltered splats in pixel-aligned ZIP format + pre-computed masks
+            splats_per_view = H * W
 
-        # Get unfiltered splats
-        unfiltered_means = predictions["splats_unfiltered"]["means"][0].reshape(-1, 3)
-        unfiltered_scales = predictions["splats_unfiltered"]["scales"][0].reshape(-1, 3)
-        unfiltered_quats = predictions["splats_unfiltered"]["quats"][0].reshape(-1, 4)
-        unfiltered_opacities = predictions["splats_unfiltered"]["opacities"][0].reshape(-1)
-        unfiltered_sh = predictions["splats_unfiltered"]["sh"][0]  # [N, 1, 3]
+            print(f"  - Total splats per view (H*W): {splats_per_view}")
+            print(f"  - Number of views: {S}")
 
-        # Get confidence scores for all views
-        all_conf = predictions["gs_depth_conf"][0].flatten()  # [S*H*W]
+            # Get unfiltered splats
+            unfiltered_means = predictions["splats_unfiltered"]["means"][0].reshape(-1, 3)
+            unfiltered_scales = predictions["splats_unfiltered"]["scales"][0].reshape(-1, 3)
+            unfiltered_quats = predictions["splats_unfiltered"]["quats"][0].reshape(-1, 4)
+            unfiltered_opacities = predictions["splats_unfiltered"]["opacities"][0].reshape(-1)
+            unfiltered_sh = predictions["splats_unfiltered"]["sh"][0]  # [N, 1, 3]
 
-        # Save individual view splats as EXR zips (from combined splats, pixel-aligned)
-        for i in range(S):
-            start = i * splats_per_view
-            end = (i + 1) * splats_per_view
+            # Get confidence scores for all views
+            all_conf = predictions["gs_depth_conf"][0].flatten()  # [S*H*W]
 
-            means_i = filtered_splats["means"][0, start:end].reshape(H, W, 3)
-            scales_i = filtered_splats["scales"][0, start:end].reshape(H, W, 3)
-            quats_i = filtered_splats["quats"][0, start:end].reshape(H, W, 4)
-            opacities_i = filtered_splats["opacities"][0, start:end].reshape(H, W, 1)
-            sh_i = filtered_splats["sh"][0, start:end].reshape(H, W, 3)
+            # Save individual view splats as EXR zips (from combined splats, pixel-aligned)
+            for i in range(S):
+                start = i * splats_per_view
+                end = (i + 1) * splats_per_view
 
-            splats_i = {
-                "means": means_i,
-                "quats": quats_i,
-                "scales": scales_i,
-                "opacities": opacities_i,
-                "sh": sh_i,
-            }
+                means_i = filtered_splats["means"][0, start:end].reshape(H, W, 3)
+                scales_i = filtered_splats["scales"][0, start:end].reshape(H, W, 3)
+                quats_i = filtered_splats["quats"][0, start:end].reshape(H, W, 4)
+                opacities_i = filtered_splats["opacities"][0, start:end].reshape(H, W, 1)
+                sh_i = filtered_splats["sh"][0, start:end].reshape(H, W, 3)
 
-            zip_path = outdir / f"splats_view_{i}.zip"
-            save_splat_artifacts(zip_path, splats_i, H, W)
-            print(f"  - Saved view {i} splats to {zip_path}")
+                splats_i = {
+                    "means": means_i,
+                    "quats": quats_i,
+                    "scales": scales_i,
+                    "opacities": opacities_i,
+                    "sh": sh_i,
+                }
 
-        # Compute and save masks for cumulative sets
-        for cumulative_views in range(S):
-            # Get confidence for views 0 to cumulative_views
-            end_idx = (cumulative_views + 1) * splats_per_view
-            conf_cum = all_conf[:end_idx]
+                zip_path = outdir / f"splats_view_{i}.zip"
+                save_splat_artifacts(zip_path, splats_i, H, W)
+                print(f"  - Saved view {i} splats to {zip_path}")
 
-            # Apply global confidence filtering to the cumulative set
-            threshold = torch.quantile(conf_cum, 0.1)  # 10th percentile (top 90%)
-            valid_mask = conf_cum >= threshold
+            # Compute and save masks for cumulative sets
+            for cumulative_views in range(S):
+                # Get confidence for views 0 to cumulative_views
+                end_idx = (cumulative_views + 1) * splats_per_view
+                conf_cum = all_conf[:end_idx]
 
-            filtered_count = valid_mask.sum().item()
-            total_possible = end_idx
-            print(f"  - Cumulative views 0-{cumulative_views}: {filtered_count}/{total_possible} splats would be kept")
+                # Apply global confidence filtering to the cumulative set
+                threshold = torch.quantile(conf_cum, 0.1)  # 10th percentile (top 90%)
+                valid_mask = conf_cum >= threshold
 
-            # Save mask as numpy array
-            mask_path = outdir / f"mask_cumulative_{cumulative_views}.npy"
-            np.save(mask_path, valid_mask.cpu().numpy())
-            print(f"  - Saved mask 0-{cumulative_views} to {mask_path}")
+                filtered_count = valid_mask.sum().item()
+                total_possible = end_idx
+                print(f"  - Cumulative views 0-{cumulative_views}: {filtered_count}/{total_possible} splats would be kept")
 
-        # Save the exact splats used by render_interpolated_video as flat EXR
-        if "splats" in predictions:
-            # predictions["splats"] is already prepared in the correct format
-            filtered_splats = predictions["splats"]
+                # Save mask as numpy array
+                mask_path = outdir / f"mask_cumulative_{cumulative_views}.npy"
+                np.save(mask_path, valid_mask.cpu().numpy())
+                print(f"  - Saved mask 0-{cumulative_views} to {mask_path}")
 
-            # Handle case where splats are stored as lists (from pruning)
-            if isinstance(filtered_splats["means"], list):
-                filtered_splats = {k: torch.stack(v) for k, v in filtered_splats.items()}
+            # Save the exact splats used by render_interpolated_video as flat EXR
+            # splats dict is already in [1, N, ...] format for flat EXR
+            flat_splats = filtered_splats
 
             # Flatten all views into one big splat array
             total_splats = filtered_splats["means"].shape[1]
             print(f"  - Saving splats for all views: {total_splats} total splats")
-
-            # splats dict is already in [1, N, ...] format for flat EXR
-            flat_splats = filtered_splats
 
             # Save as EXR with height=1, width=total_splats
             flat_zip_path = outdir / "splats_filtered_all.zip"
