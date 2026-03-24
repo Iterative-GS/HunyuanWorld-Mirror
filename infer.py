@@ -349,50 +349,32 @@ def main():
 
         # Save Gaussians as EXR zips and render video
     if "splats" in predictions and args.save_gs:
-        # Apply confidence filtering per view to maintain H×W structure
+        # Save unfiltered splats in pixel-aligned ZIP format + pre-computed masks
         splats_per_view = H * W
-        total_splats = S * splats_per_view
 
         print(f"  - Total splats per view (H*W): {splats_per_view}")
         print(f"  - Number of views: {S}")
 
-        # Get unfiltered splats for per-view filtering
+        # Get unfiltered splats
         unfiltered_means = predictions["splats_unfiltered"]["means"][0].reshape(-1, 3)
         unfiltered_scales = predictions["splats_unfiltered"]["scales"][0].reshape(-1, 3)
         unfiltered_quats = predictions["splats_unfiltered"]["quats"][0].reshape(-1, 4)
         unfiltered_opacities = predictions["splats_unfiltered"]["opacities"][0].reshape(-1)
         unfiltered_sh = predictions["splats_unfiltered"]["sh"][0]  # [N, 1, 3]
 
-        # Apply confidence filtering per view
-        filtered_splats_list = []
-        total_filtered = 0
+        # Get confidence scores for all views
+        all_conf = predictions["gs_depth_conf"][0].flatten()  # [S*H*W]
 
+        # Save individual view splats as EXR zips (unfiltered, pixel-aligned)
         for i in range(S):
             start = i * splats_per_view
             end = (i + 1) * splats_per_view
 
-            # Extract splats for this view
             means_i = unfiltered_means[start:end]
             scales_i = unfiltered_scales[start:end]
             quats_i = unfiltered_quats[start:end]
             opacities_i = unfiltered_opacities[start:end]
             sh_i = unfiltered_sh[start:end]
-
-                # Apply confidence filtering for this view
-            conf_view = predictions["gs_depth_conf"][0, i].flatten()  # [H*W]
-            if conf_view.numel() == splats_per_view:  # Ensure shapes match
-                threshold = torch.quantile(conf_view, 0.1)  # 10th percentile (top 90%)
-                valid_mask = conf_view >= threshold
-
-                # Mark invalid splats with opacity = -1 (sentinel value)
-                opacities_i = torch.where(valid_mask, opacities_i, torch.tensor(-1.0, device=opacities_i.device))
-                filtered_count = valid_mask.sum().item()
-                total_filtered += filtered_count
-                print(f"    - View {i}: {filtered_count}/{splats_per_view} splats kept (filtered)")
-            else:
-                print(f"    - View {i}: confidence shape mismatch, keeping all {splats_per_view} splats")
-                filtered_count = splats_per_view
-                total_filtered += filtered_count
 
             splats_i = {
                 "means": means_i,
@@ -406,7 +388,24 @@ def main():
             save_splat_artifacts(zip_path, splats_i, H, W)
             print(f"  - Saved view {i} splats to {zip_path}")
 
-        print(f"  - Total filtered splats across all views: {total_filtered}/{total_splats}")
+        # Compute and save masks for cumulative sets
+        for cumulative_views in range(S):
+            # Get confidence for views 0 to cumulative_views
+            end_idx = (cumulative_views + 1) * splats_per_view
+            conf_cum = all_conf[:end_idx]
+
+            # Apply global confidence filtering to the cumulative set
+            threshold = torch.quantile(conf_cum, 0.1)  # 10th percentile (top 90%)
+            valid_mask = conf_cum >= threshold
+
+            filtered_count = valid_mask.sum().item()
+            total_possible = end_idx
+            print(f"  - Cumulative views 0-{cumulative_views}: {filtered_count}/{total_possible} splats would be kept")
+
+            # Save mask as numpy array
+            mask_path = outdir / f"mask_cumulative_{cumulative_views}.npy"
+            np.save(mask_path, valid_mask.cpu().numpy())
+            print(f"  - Saved mask 0-{cumulative_views} to {mask_path}")
 
         # Render video using the same filtered splats from predictions
         num_views = S

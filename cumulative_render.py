@@ -46,13 +46,14 @@ def load_splats_from_ply(ply_path):
 
     # Extract data and convert back to tensor format
     means = torch.tensor(np.column_stack([vert["x"], vert["y"], vert["z"]]), dtype=torch.float32)
-    colors = torch.tensor(np.column_stack([vert["f_dc_0"], vert["f_dc_1"], vert["f_dc_2"]]), dtype=torch.float32)
     opacities = torch.tensor(vert["opacity"], dtype=torch.float32)
     scales = torch.exp(torch.tensor(np.column_stack([vert["scale_0"], vert["scale_1"], vert["scale_2"]]), dtype=torch.float32))
     quats = torch.tensor(np.column_stack([vert["rot_0"], vert["rot_1"], vert["rot_2"], vert["rot_3"]]), dtype=torch.float32)
 
-    # Convert RGB colors back to SH coefficients (as stored in prepare_splats)
-    sh = RGB2SH(colors).unsqueeze(1)  # [N, 1, 3]
+    # Extract RGB colors (stored as f_dc in PLY) and convert back to SH coefficients
+    rgb_colors = torch.tensor(np.column_stack([vert["f_dc_0"], vert["f_dc_1"], vert["f_dc_2"]]), dtype=torch.float32)
+    sh_coeffs = RGB2SH(rgb_colors)  # Convert RGB back to SH
+    sh = sh_coeffs.unsqueeze(1)  # [N, 1, 3]
 
     return {
         "means": means.unsqueeze(0),      # [1, N, 3]
@@ -180,7 +181,7 @@ def main():
     for i in range(num_views):
         print(f"\n🔄 Processing cumulative views 0-{i}")
 
-        # Load splats for views 0 to i
+        # Load concatenated splats (views 0 to i)
         all_splats = []
         for j in range(i + 1):
             zip_path = infer_dir / f"splats_view_{j}.zip"
@@ -202,6 +203,21 @@ def main():
 
         total_splats = combined_splats["means"].shape[1]
         print(f"  🔗 Combined splats: {total_splats} total")
+
+        # Load and apply pre-computed mask
+        mask_path = infer_dir / f"mask_cumulative_{i}.npy"
+        if not mask_path.exists():
+            raise FileNotFoundError(f"Mask file not found: {mask_path}")
+
+        mask = np.load(mask_path)
+        mask_tensor = torch.from_numpy(mask).to(device)
+        print(f"  🎭 Loaded mask: {mask_tensor.sum().item()}/{len(mask)} splats to keep")
+
+        # Apply mask to filter splats
+        combined_splats = {k: v[:, mask_tensor] for k, v in combined_splats.items()}
+
+        filtered_splats = combined_splats["means"].shape[1]
+        print(f"  ✂️  After filtering: {filtered_splats} splats")
 
         # Prepare cameras for views 0 to i
         viewmats = torch.stack(extrinsics[:i+1]).unsqueeze(0).to(device)  # [1, i+1, 4, 4]
