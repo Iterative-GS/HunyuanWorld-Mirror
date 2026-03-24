@@ -277,25 +277,17 @@ class GaussianSplatRenderer(nn.Module):
         # Apply filtering per view to maintain pixel alignment
         all_masks = []
         for view_idx in range(S):
-            # Get confidence for this view: [B, H, W]
-            conf_view = gs_depth_conf[:, view_idx, :, :]
+            # Get confidence for this view: [B, H, W] -> [B, H*W]
+            conf_view = gs_depth_conf[:, view_idx, :, :].flatten(1).to(device)
+            conf_view = conf_view.masked_fill(conf_view <= 1e-5, float("-inf"))
 
-            mask_view_list = []
-            for b in range(B):
-                confidences = conf_view[b]  # [H, W]
-                confidences = confidences.masked_fill(confidences <= 1e-5, float("-inf"))
-                confidences_np = confidences.cpu().numpy()
+            # Compute threshold for this view
+            if self.conf_threshold_percent > 0:
+                threshold = torch.quantile(conf_view, self.conf_threshold_percent / 100.0, dim=1, keepdim=True)
+                mask_view = conf_view >= threshold
+            else:
+                mask_view = torch.ones_like(conf_view, dtype=torch.bool)
 
-                if self.conf_threshold_percent > 0:
-                    percentile_threshold = np.quantile(confidences_np, self.conf_threshold_percent / 100.0)
-                    conf_mask = confidences_np >= percentile_threshold
-                else:
-                    conf_mask = np.ones_like(confidences_np, dtype=bool)
-
-                mask_b = torch.from_numpy(conf_mask).to(device).flatten()
-                mask_view_list.append(mask_b)
-
-            mask_view = torch.stack(mask_view_list, dim=0)  # [B, H*W]
             all_masks.append(mask_view)
 
         # Concatenate masks for all views: [B, S*H*W]
