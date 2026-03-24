@@ -44,20 +44,19 @@ def create_filter_mask(
     """
     Create comprehensive filter mask based on confidence, edges, and sky segmentation.
     This follows the same logic as app.py for consistent mask computation.
-
+    
     Args:
         pts3d_conf: Point confidence scores [S, H, W]
         depth_preds: Depth predictions [S, H, W, 1]
         normal_preds: Normal predictions [S, H, W, 3]
         sky_mask: Sky segmentation mask [S, H, W]
-        confidence_percentile: Percentile threshold for confidence filtering (0-100).
-                               Now computed globally across all frames.
+        confidence_percentile: Percentile threshold for confidence filtering (0-100)
         edge_normal_threshold: Normal angle threshold in degrees for edge detection
         edge_depth_threshold: Relative depth threshold for edge detection
         apply_confidence_mask: Whether to apply confidence-based filtering
         apply_edge_mask: Whether to apply edge-based filtering
         apply_sky_mask: Whether to apply sky mask filtering
-
+    
     Returns:
         final_mask: Boolean mask array [S, H, W] for filtering points
     """
@@ -68,12 +67,10 @@ def create_filter_mask(
         final_mask = None
         
         if apply_confidence_mask:
-            # Compute global confidence threshold across all frames
-            all_confidences = pts3d_conf.flatten()
-            global_threshold = np.quantile(all_confidences, confidence_percentile / 100.0)
-            # Use global threshold for this frame
+            # Compute confidence mask based on the pointmap confidence
             confidences = pts3d_conf[i, :, :]  # [H, W]
-            conf_mask = confidences >= global_threshold
+            percentile_threshold = np.quantile(confidences, confidence_percentile / 100.0)
+            conf_mask = confidences >= percentile_threshold
             if final_mask is None:
                 final_mask = conf_mask
             else:
@@ -126,7 +123,7 @@ def main():
     parser.add_argument("--confidence_percentile", type=float, default=10.0, help="Confidence percentile threshold for filtering (0-100, filters bottom X percent)")
     parser.add_argument("--edge_normal_threshold", type=float, default=5.0, help="Normal angle threshold in degrees for edge detection")
     parser.add_argument("--edge_depth_threshold", type=float, default=0.03, help="Relative depth threshold for edge detection")
-    parser.add_argument("--apply_confidence_mask", action="store_true", default=True, help="Apply confidence-based filtering")
+    parser.add_argument("--apply_confidence_mask", action="store_true", default=False, help="Apply confidence-based filtering")
     parser.add_argument("--apply_edge_mask", action="store_true", default=False, help="Apply edge-based filtering")
     parser.add_argument("--apply_sky_mask", action="store_true", default=False, help="Apply sky mask filtering")
     # Save flags
@@ -159,6 +156,9 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = WorldMirror.from_pretrained("tencent/HunyuanWorld-Mirror").to(device)
     model.eval()
+    # Disable pruning and confidence filtering to keep splats in pixel order
+    model.gs_renderer.enable_prune = False
+    model.gs_renderer.enable_conf_filter = False
     
     input_path = Path(args.input_path)
     
