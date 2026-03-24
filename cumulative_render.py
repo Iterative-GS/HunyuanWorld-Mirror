@@ -138,7 +138,7 @@ def main():
 
         # Save renders for each camera
         for cam_idx in range(i + 1):
-            rgb_tensor = colors[0, cam_idx].permute(1, 2, 0)  # [H, W, 3] for PIL
+            rgb_tensor = colors[0, cam_idx]  # [H, W, 3] - already correct for PIL
             render_path = render_dir / f"cumulative_view_{i}_cam_{cam_idx}.png"
             save_image_png(render_path, rgb_tensor)
             print(f"  💾 Saved: {render_path}")
