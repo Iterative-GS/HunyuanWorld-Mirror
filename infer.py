@@ -409,8 +409,8 @@ def main():
 
         # Save the exact filtered splats used by render_interpolated_video as flat EXR
         if "splats" in predictions:
-            # predictions["splats"] is a list with one entry for batch 0
-            filtered_splats = predictions["splats"][0]  # Dict with means, quats, scales, opacities, sh
+            # predictions["splats"] is the dict with means, quats, scales, opacities, sh
+            filtered_splats = predictions["splats"]  # Dict with means, quats, scales, opacities, sh
 
             # Flatten all views into one big splat array
             total_splats = filtered_splats["means"].shape[0]
