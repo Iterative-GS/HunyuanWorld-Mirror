@@ -156,9 +156,6 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = WorldMirror.from_pretrained("tencent/HunyuanWorld-Mirror").to(device)
     model.eval()
-    # Disable pruning and confidence filtering to keep splats in pixel order
-    model.gs_renderer.enable_prune = False
-    model.gs_renderer.enable_conf_filter = False
     
     input_path = Path(args.input_path)
     
@@ -373,8 +370,9 @@ def main():
         )
 
         # Save individual view splats
-        # Slice assuming pixel order: view0_pixels, view1_pixels, ..., viewS_pixels
-        print(f"  - Slicing splats assuming pixel order (H*W per view): {H * W}")
+        # Divide total splats into S equal parts, assuming uniform filtering
+        splats_per_view = len(means) // S
+        print(f"  - Dividing {len(means)} splats into {S} equal parts: {splats_per_view} per view")
 
         for i in range(S):
             # compute mask for view i
@@ -395,8 +393,11 @@ def main():
                 apply_sky_mask=args.apply_sky_mask,
             )[0]  # [H, W]
 
-            start = i * (H * W)
-            end = min((i + 1) * (H * W), len(means))
+            start = i * splats_per_view
+            if i == S - 1:
+                end = len(means)
+            else:
+                end = (i + 1) * splats_per_view
 
             means_i = means[start:end]
             scales_i = scales[start:end]
