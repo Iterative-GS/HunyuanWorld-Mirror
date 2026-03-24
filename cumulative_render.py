@@ -192,16 +192,28 @@ def main():
     for i in range(num_views):
         print(f"\n🔄 Processing cumulative views 0-{i}")
 
-        # Always use the exact unfiltered splats from render_interpolated_video to ensure identical appearance
-        filtered_zip = infer_dir / "splats_filtered_all.zip"
-        if not filtered_zip.exists():
-            raise FileNotFoundError(f"Filtered splats file not found: {filtered_zip}")
+        # Load concatenated splats (views 0 to i) from pixel-aligned individual splats
+        all_splats = []
+        for j in range(i + 1):
+            zip_path = infer_dir / f"splats_view_{j}.zip"
+            if not zip_path.exists():
+                raise FileNotFoundError(f"Splat file not found: {zip_path}")
 
-        combined_splats = load_splats_from_exr(filtered_zip)
-        combined_splats = {k: v.to(device) for k, v in combined_splats.items()}
+            splats_j = load_splats_from_exr(zip_path)
+            all_splats.append(splats_j)
+            print(f"  📄 Loaded splats_view_{j}.zip: {splats_j['means'].shape[1]} splats")
+
+        # Concatenate splats along the N dimension (dim=1)
+        combined_splats = {
+            "means": torch.cat([s["means"].to(device) for s in all_splats], dim=1),
+            "quats": torch.cat([s["quats"].to(device) for s in all_splats], dim=1),
+            "scales": torch.cat([s["scales"].to(device) for s in all_splats], dim=1),
+            "opacities": torch.cat([s["opacities"].to(device) for s in all_splats], dim=1),
+            "sh": torch.cat([s["sh"].to(device) for s in all_splats], dim=1),
+        }
 
         total_splats = combined_splats["means"].shape[1]
-        print(f"  📄 Loaded exact unfiltered splats: {total_splats} splats")
+        print(f"  🔗 Combined splats: {total_splats} total")
 
         # Debug: Save splat shapes and sample values to verify consistency
         debug_path = render_dir / f"debug_splats_view_{i}.txt"

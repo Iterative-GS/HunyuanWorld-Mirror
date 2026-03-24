@@ -365,16 +365,16 @@ def main():
         # Get confidence scores for all views
         all_conf = predictions["gs_depth_conf"][0].flatten()  # [S*H*W]
 
-        # Save individual view splats as EXR zips (unfiltered, pixel-aligned)
+        # Save individual view splats as EXR zips (from combined splats, pixel-aligned)
         for i in range(S):
             start = i * splats_per_view
             end = (i + 1) * splats_per_view
 
-            means_i = unfiltered_means[start:end]
-            scales_i = unfiltered_scales[start:end]
-            quats_i = unfiltered_quats[start:end]
-            opacities_i = unfiltered_opacities[start:end]
-            sh_i = unfiltered_sh[start:end]
+            means_i = filtered_splats["means"][0, start:end].reshape(H, W, 3)
+            scales_i = filtered_splats["scales"][0, start:end].reshape(H, W, 3)
+            quats_i = filtered_splats["quats"][0, start:end].reshape(H, W, 4)
+            opacities_i = filtered_splats["opacities"][0, start:end].reshape(H, W, 1)
+            sh_i = filtered_splats["sh"][0, start:end].reshape(H, W, 3)
 
             splats_i = {
                 "means": means_i,
