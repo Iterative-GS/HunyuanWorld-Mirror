@@ -200,6 +200,8 @@ class GaussianSplatRenderer(nn.Module):
         else:
             splats = self.prepare_splats(views, predictions, images, gs_params, S, position_from="gsdepth+predcamera")
 
+        predictions["splats_unfiltered"] = splats
+
         # Apply confidence filtering before pruning
         splat_counts = None
         if self.enable_conf_filter and "gs_depth_conf" in predictions:

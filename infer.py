@@ -349,12 +349,12 @@ def main():
 
     # Save Gaussians as EXR zips and render video
     if "splats" in predictions and args.save_gs:
-        # Get Gaussian parameters
-        means = predictions["splats"]["means"][0].reshape(-1, 3)
-        scales = predictions["splats"]["scales"][0].reshape(-1, 3)
-        quats = predictions["splats"]["quats"][0].reshape(-1, 4)
-        opacities = predictions["splats"]["opacities"][0].reshape(-1)
-        sh = predictions["splats"]["sh"][0]  # [N, 1, 3]
+        # Get Gaussian parameters (use unfiltered to preserve pixel alignment)
+        means = predictions["splats_unfiltered"]["means"][0].reshape(-1, 3)
+        scales = predictions["splats_unfiltered"]["scales"][0].reshape(-1, 3)
+        quats = predictions["splats_unfiltered"]["quats"][0].reshape(-1, 4)
+        opacities = predictions["splats_unfiltered"]["opacities"][0].reshape(-1)
+        sh = predictions["splats_unfiltered"]["sh"][0]  # [N, 1, 3]
 
         print(f"  - Total splats: {len(means)}")
         print(f"  - Expected splats per view (H*W): {H * W}")
