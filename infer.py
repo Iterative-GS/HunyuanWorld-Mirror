@@ -120,7 +120,7 @@ def main():
     parser.add_argument("--target_size", type=int, default=518, help="Target size for image resizing")
     parser.add_argument("--write_txt", action="store_true", help="Also write human-readable COLMAP txt (slow, huge)")
     # Mask filtering parameters
-    parser.add_argument("--confidence_percentile", type=float, default=5.0, help="Confidence percentile threshold for filtering (0-100, filters bottom X percent)")
+    parser.add_argument("--confidence_percentile", type=float, default=10.0, help="Confidence percentile threshold for filtering (0-100, filters bottom X percent)")
     parser.add_argument("--edge_normal_threshold", type=float, default=5.0, help="Normal angle threshold in degrees for edge detection")
     parser.add_argument("--edge_depth_threshold", type=float, default=0.03, help="Relative depth threshold for edge detection")
     parser.add_argument("--apply_confidence_mask", action="store_true", default=True, help="Apply confidence-based filtering")
