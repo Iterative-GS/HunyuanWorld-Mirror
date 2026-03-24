@@ -192,56 +192,26 @@ def main():
     for i in range(num_views):
         print(f"\n🔄 Processing cumulative views 0-{i}")
 
-        if i == num_views - 1:
-            # For the final all-views case, use the exact filtered splats from render_interpolated_video
-            filtered_zip = infer_dir / "splats_filtered_all.zip"
-            if not filtered_zip.exists():
-                raise FileNotFoundError(f"Filtered splats file not found: {filtered_zip}")
+        # Always use the exact unfiltered splats from render_interpolated_video to ensure identical appearance
+        filtered_zip = infer_dir / "splats_filtered_all.zip"
+        if not filtered_zip.exists():
+            raise FileNotFoundError(f"Filtered splats file not found: {filtered_zip}")
 
-            combined_splats = load_splats_from_exr(filtered_zip)
-            combined_splats = {k: v.to(device) for k, v in combined_splats.items()}
+        combined_splats = load_splats_from_exr(filtered_zip)
+        combined_splats = {k: v.to(device) for k, v in combined_splats.items()}
 
-            total_splats = combined_splats["means"].shape[1]
-            print(f"  📄 Loaded exact filtered splats: {total_splats} splats")
-        else:
-            # For intermediate cases, use mask-based concatenation
-            # Load concatenated splats (views 0 to i)
-            all_splats = []
-            for j in range(i + 1):
-                zip_path = infer_dir / f"splats_view_{j}.zip"
-                if not zip_path.exists():
-                    raise FileNotFoundError(f"Splat file not found: {zip_path}")
+        total_splats = combined_splats["means"].shape[1]
+        print(f"  📄 Loaded exact unfiltered splats: {total_splats} splats")
 
-                splats_j = load_splats_from_exr(zip_path)
-                all_splats.append(splats_j)
-                print(f"  📄 Loaded splats_view_{j}.zip: {splats_j['means'].shape[1]} splats")
-
-            # Concatenate splats along the N dimension (dim=1)
-            combined_splats = {
-                "means": torch.cat([s["means"].to(device) for s in all_splats], dim=1),
-                "quats": torch.cat([s["quats"].to(device) for s in all_splats], dim=1),
-                "scales": torch.cat([s["scales"].to(device) for s in all_splats], dim=1),
-                "opacities": torch.cat([s["opacities"].to(device) for s in all_splats], dim=1),
-                "sh": torch.cat([s["sh"].to(device) for s in all_splats], dim=1),
-            }
-
-            total_splats = combined_splats["means"].shape[1]
-            print(f"  🔗 Combined splats: {total_splats} total")
-
-            # Load and apply pre-computed mask
-            mask_path = infer_dir / f"mask_cumulative_{i}.npy"
-            if not mask_path.exists():
-                raise FileNotFoundError(f"Mask file not found: {mask_path}")
-
-            mask = np.load(mask_path)
-            mask_tensor = torch.from_numpy(mask).to(device)
-            print(f"  🎭 Loaded mask: {mask_tensor.sum().item()}/{len(mask)} splats to keep")
-
-            # Apply mask to filter splats
-            combined_splats = {k: v[:, mask_tensor] for k, v in combined_splats.items()}
-
-            filtered_splats = combined_splats["means"].shape[1]
-            print(f"  ✂️  After filtering: {filtered_splats} splats")
+        # Debug: Save splat shapes and sample values to verify consistency
+        debug_path = render_dir / f"debug_splats_view_{i}.txt"
+        with open(debug_path, 'w') as f:
+            f.write(f"View {i} splats:\n")
+            f.write(f"means shape: {combined_splats['means'].shape}\n")
+            f.write(f"means sample: {combined_splats['means'][0, :5, :3]}\n")
+            f.write(f"opacities shape: {combined_splats['opacities'].shape}\n")
+            f.write(f"opacities sample: {combined_splats['opacities'][0, :5]}\n")
+        print(f"  🐛 Saved debug info to {debug_path}")
 
         # Prepare cameras for views 0 to i
         viewmats = torch.stack(extrinsics[:i+1]).unsqueeze(0).to(device)  # [1, i+1, 4, 4]
