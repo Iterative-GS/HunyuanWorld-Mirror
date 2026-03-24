@@ -412,8 +412,11 @@ def main():
             # predictions["splats"] is already prepared in the correct format
             filtered_splats = predictions["splats"]
 
+            # Handle case where splats are stored as lists (from pruning)
+            if isinstance(filtered_splats["means"], list):
+                filtered_splats = {k: torch.stack(v) for k, v in filtered_splats.items()}
+
             # Flatten all views into one big splat array
-            print(len(filtered_splats["means"][0]))
             total_splats = filtered_splats["means"].shape[1]
             print(f"  - Saving splats for all views: {total_splats} total splats")
 
