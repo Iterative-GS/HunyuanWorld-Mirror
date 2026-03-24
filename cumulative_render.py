@@ -129,13 +129,24 @@ def load_splats_from_exr(exr_zip_path):
             sh_flat = sh_flat[valid_mask]
 
             # Convert to torch
-            return {
-                "means": torch.tensor(means_flat, dtype=torch.float32).unsqueeze(0),      # [1, N, 3]
-                "quats": torch.tensor(quats_flat, dtype=torch.float32).unsqueeze(0),      # [1, N, 4]
-                "scales": torch.tensor(scales_flat, dtype=torch.float32).unsqueeze(0),    # [1, N, 3]
-                "opacities": torch.tensor(opacities_flat, dtype=torch.float32).unsqueeze(0), # [1, N]
-                "sh": torch.tensor(sh_flat, dtype=torch.float32).unsqueeze(1).unsqueeze(0)  # [1, N, 1, 3]
-            }
+            if height == 1:
+                # Flat splat array (for filtered all-views splats)
+                return {
+                    "means": torch.tensor(means_flat, dtype=torch.float32).unsqueeze(0),      # [1, N, 3]
+                    "quats": torch.tensor(quats_flat, dtype=torch.float32).unsqueeze(0),      # [1, N, 4]
+                    "scales": torch.tensor(scales_flat, dtype=torch.float32).unsqueeze(0),    # [1, N, 3]
+                    "opacities": torch.tensor(opacities_flat, dtype=torch.float32).unsqueeze(0), # [1, N]
+                    "sh": torch.tensor(sh_flat, dtype=torch.float32).unsqueeze(1).unsqueeze(0)  # [1, N, 1, 3]
+                }
+            else:
+                # H×W structured splats (for individual views)
+                return {
+                    "means": torch.tensor(means_flat, dtype=torch.float32).unsqueeze(0),      # [1, N, 3]
+                    "quats": torch.tensor(quats_flat, dtype=torch.float32).unsqueeze(0),      # [1, N, 4]
+                    "scales": torch.tensor(scales_flat, dtype=torch.float32).unsqueeze(0),    # [1, N, 3]
+                    "opacities": torch.tensor(opacities_flat, dtype=torch.float32).unsqueeze(0), # [1, N]
+                    "sh": torch.tensor(sh_flat, dtype=torch.float32).unsqueeze(1).unsqueeze(0)  # [1, N, 1, 3]
+                }
 
 
 def main():
@@ -181,43 +192,56 @@ def main():
     for i in range(num_views):
         print(f"\n🔄 Processing cumulative views 0-{i}")
 
-        # Load concatenated splats (views 0 to i)
-        all_splats = []
-        for j in range(i + 1):
-            zip_path = infer_dir / f"splats_view_{j}.zip"
-            if not zip_path.exists():
-                raise FileNotFoundError(f"Splat file not found: {zip_path}")
+        if i == num_views - 1:
+            # For the final all-views case, use the exact filtered splats from render_interpolated_video
+            filtered_zip = infer_dir / "splats_filtered_all.zip"
+            if not filtered_zip.exists():
+                raise FileNotFoundError(f"Filtered splats file not found: {filtered_zip}")
 
-            splats_j = load_splats_from_exr(zip_path)
-            all_splats.append(splats_j)
-            print(f"  📄 Loaded splats_view_{j}.zip: {splats_j['means'].shape[1]} splats")
+            combined_splats = load_splats_from_exr(filtered_zip)
+            combined_splats = {k: v.to(device) for k, v in combined_splats.items()}
 
-        # Concatenate splats along the N dimension (dim=1)
-        combined_splats = {
-            "means": torch.cat([s["means"].to(device) for s in all_splats], dim=1),
-            "quats": torch.cat([s["quats"].to(device) for s in all_splats], dim=1),
-            "scales": torch.cat([s["scales"].to(device) for s in all_splats], dim=1),
-            "opacities": torch.cat([s["opacities"].to(device) for s in all_splats], dim=1),
-            "sh": torch.cat([s["sh"].to(device) for s in all_splats], dim=1),
-        }
+            total_splats = combined_splats["means"].shape[1]
+            print(f"  📄 Loaded exact filtered splats: {total_splats} splats")
+        else:
+            # For intermediate cases, use mask-based concatenation
+            # Load concatenated splats (views 0 to i)
+            all_splats = []
+            for j in range(i + 1):
+                zip_path = infer_dir / f"splats_view_{j}.zip"
+                if not zip_path.exists():
+                    raise FileNotFoundError(f"Splat file not found: {zip_path}")
 
-        total_splats = combined_splats["means"].shape[1]
-        print(f"  🔗 Combined splats: {total_splats} total")
+                splats_j = load_splats_from_exr(zip_path)
+                all_splats.append(splats_j)
+                print(f"  📄 Loaded splats_view_{j}.zip: {splats_j['means'].shape[1]} splats")
 
-        # Load and apply pre-computed mask
-        mask_path = infer_dir / f"mask_cumulative_{i}.npy"
-        if not mask_path.exists():
-            raise FileNotFoundError(f"Mask file not found: {mask_path}")
+            # Concatenate splats along the N dimension (dim=1)
+            combined_splats = {
+                "means": torch.cat([s["means"].to(device) for s in all_splats], dim=1),
+                "quats": torch.cat([s["quats"].to(device) for s in all_splats], dim=1),
+                "scales": torch.cat([s["scales"].to(device) for s in all_splats], dim=1),
+                "opacities": torch.cat([s["opacities"].to(device) for s in all_splats], dim=1),
+                "sh": torch.cat([s["sh"].to(device) for s in all_splats], dim=1),
+            }
 
-        mask = np.load(mask_path)
-        mask_tensor = torch.from_numpy(mask).to(device)
-        print(f"  🎭 Loaded mask: {mask_tensor.sum().item()}/{len(mask)} splats to keep")
+            total_splats = combined_splats["means"].shape[1]
+            print(f"  🔗 Combined splats: {total_splats} total")
 
-        # Apply mask to filter splats
-        combined_splats = {k: v[:, mask_tensor] for k, v in combined_splats.items()}
+            # Load and apply pre-computed mask
+            mask_path = infer_dir / f"mask_cumulative_{i}.npy"
+            if not mask_path.exists():
+                raise FileNotFoundError(f"Mask file not found: {mask_path}")
 
-        filtered_splats = combined_splats["means"].shape[1]
-        print(f"  ✂️  After filtering: {filtered_splats} splats")
+            mask = np.load(mask_path)
+            mask_tensor = torch.from_numpy(mask).to(device)
+            print(f"  🎭 Loaded mask: {mask_tensor.sum().item()}/{len(mask)} splats to keep")
+
+            # Apply mask to filter splats
+            combined_splats = {k: v[:, mask_tensor] for k, v in combined_splats.items()}
+
+            filtered_splats = combined_splats["means"].shape[1]
+            print(f"  ✂️  After filtering: {filtered_splats} splats")
 
         # Prepare cameras for views 0 to i
         viewmats = torch.stack(extrinsics[:i+1]).unsqueeze(0).to(device)  # [1, i+1, 4, 4]

@@ -407,6 +407,29 @@ def main():
             np.save(mask_path, valid_mask.cpu().numpy())
             print(f"  - Saved mask 0-{cumulative_views} to {mask_path}")
 
+        # Save the exact filtered splats used by render_interpolated_video as flat EXR
+        if "splats" in predictions:
+            # predictions["splats"] is a list with one entry for batch 0
+            filtered_splats = predictions["splats"][0]  # Dict with means, quats, scales, opacities, sh
+
+            # Flatten all views into one big splat array
+            total_splats = filtered_splats["means"].shape[0]
+            print(f"  - Saving filtered splats for all views: {total_splats} total splats")
+
+            # Create splats dict for flat EXR (height=1, width=total_splats)
+            flat_splats = {
+                "means": filtered_splats["means"].unsqueeze(0),      # [1, N, 3]
+                "quats": filtered_splats["quats"].unsqueeze(0),      # [1, N, 4]
+                "scales": filtered_splats["scales"].unsqueeze(0),    # [1, N, 3]
+                "opacities": filtered_splats["opacities"].unsqueeze(0), # [1, N]
+                "sh": filtered_splats["sh"].unsqueeze(0),            # [1, N, 1, 3]
+            }
+
+            # Save as EXR with height=1, width=total_splats
+            flat_zip_path = outdir / "splats_filtered_all.zip"
+            save_splat_artifacts(flat_zip_path, flat_splats, 1, total_splats)
+            print(f"  - Saved filtered splats to {flat_zip_path}")
+
         # Render video using the same filtered splats from predictions
         num_views = S
         if args.save_rendered:
