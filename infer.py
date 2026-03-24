@@ -378,10 +378,10 @@ def main():
             opacities_i = unfiltered_opacities[start:end]
             sh_i = unfiltered_sh[start:end]
 
-            # Apply confidence filtering for this view
+                # Apply confidence filtering for this view
             conf_view = predictions["gs_depth_conf"][0, i].flatten()  # [H*W]
             if conf_view.numel() == splats_per_view:  # Ensure shapes match
-                threshold = torch.quantile(conf_view, 0.3)  # 30th percentile (top 70%)
+                threshold = torch.quantile(conf_view, 0.1)  # 10th percentile (top 90%)
                 valid_mask = conf_view >= threshold
 
                 # Mark invalid splats with opacity = -1 (sentinel value)
