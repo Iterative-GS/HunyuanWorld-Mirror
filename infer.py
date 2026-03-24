@@ -410,8 +410,7 @@ def main():
         # Save the exact filtered splats used by render_interpolated_video as flat EXR
         if "splats" in predictions:
             # Use the same prepare_splats function as render_interpolated_video to handle any list/dict structure
-            from src.models.models.rasterization import prepare_splats
-            filtered_splats = prepare_splats(predictions["splats"], 0)  # sh_degree=0, handles list unpacking
+            filtered_splats = model.gs_renderer.prepare_splats(predictions["splats"], 0)  # sh_degree=0, handles list unpacking
 
             # Flatten all views into one big splat array
             total_splats = filtered_splats["means"].shape[0]
