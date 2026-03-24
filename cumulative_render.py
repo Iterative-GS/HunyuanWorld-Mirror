@@ -160,7 +160,8 @@ def main():
     # Load model for rendering
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = WorldMirror.from_pretrained("tencent/HunyuanWorld-Mirror").to(device)
-    gs_renderer = model.gs_renderer
+    model.gs_renderer.enable_prune = False
+
 
     print("🎨 Starting cumulative rendering...")
 
@@ -196,7 +197,7 @@ def main():
 
         # Render using the same call as render_interpolated_video
         with torch.no_grad():
-            colors, depths, _ = gs_renderer.rasterizer.rasterize_batches(
+            colors, depths, _ = model.gs_renderer.rasterizer.rasterize_batches(
                 combined_splats["means"], combined_splats["quats"], combined_splats["scales"],
                 combined_splats["opacities"], combined_splats["sh"],
                 viewmats, Ks, width=W, height=H, sh_degree=0
