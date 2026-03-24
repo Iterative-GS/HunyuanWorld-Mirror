@@ -66,6 +66,7 @@ def load_splats_from_ply(ply_path):
 def load_splats_from_exr(exr_zip_path):
     """
     Load Gaussian splats from EXR zip file and convert to tensor format expected by rasterizer.
+    Filters out invalid splats (marked with opacity = -1).
 
     Args:
         exr_zip_path: Path to EXR zip file
@@ -114,6 +115,17 @@ def load_splats_from_exr(exr_zip_path):
             scales_flat = scales.reshape(N, 3)
             opacities_flat = opacities.reshape(N)
             sh_flat = sh.reshape(N, 3)
+
+            # Filter out invalid splats (marked with opacity = -1)
+            valid_mask = opacities_flat != -1.0
+            num_valid = valid_mask.sum()
+            print(f"  Loaded {num_valid}/{N} valid splats (filtered out {N - num_valid} invalid)")
+
+            means_flat = means_flat[valid_mask]
+            quats_flat = quats_flat[valid_mask]
+            scales_flat = scales_flat[valid_mask]
+            opacities_flat = opacities_flat[valid_mask]
+            sh_flat = sh_flat[valid_mask]
 
             # Convert to torch
             return {

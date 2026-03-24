@@ -347,49 +347,66 @@ def main():
             save_normal_png(normal_dir / f"normal_{i:04d}.png", predictions["normals"][0, i])
         print(f"  - Saved {S} normal maps to {normal_dir}")
 
-    # Save Gaussians as EXR zips and render video
-    if "splats" in predictions and args.save_gs:
-        # Get Gaussian parameters (use unfiltered to preserve pixel alignment)
-        means = predictions["splats_unfiltered"]["means"][0].reshape(-1, 3)
-        scales = predictions["splats_unfiltered"]["scales"][0].reshape(-1, 3)
-        quats = predictions["splats_unfiltered"]["quats"][0].reshape(-1, 4)
-        opacities = predictions["splats_unfiltered"]["opacities"][0].reshape(-1)
-        sh = predictions["splats_unfiltered"]["sh"][0]  # [N, 1, 3]
+        # Save Gaussians as EXR zips and render video
+        if "splats" in predictions and args.save_gs:
+            # Apply confidence filtering per view to maintain H×W structure
+            splats_per_view = H * W
+            total_splats = S * splats_per_view
 
-        print(f"  - Total splats: {len(means)}")
-        print(f"  - Expected splats per view (H*W): {H * W}")
-        print(f"  - Number of views: {S}")
+            print(f"  - Total splats per view (H*W): {splats_per_view}")
+            print(f"  - Number of views: {S}")
 
-        # Save individual view splats as EXR zips
-        splats_per_view = len(means) // S
-        print(f"  - Splats per view: {splats_per_view}")
+            # Get unfiltered splats for per-view filtering
+            unfiltered_means = predictions["splats_unfiltered"]["means"][0].reshape(-1, 3)
+            unfiltered_scales = predictions["splats_unfiltered"]["scales"][0].reshape(-1, 3)
+            unfiltered_quats = predictions["splats_unfiltered"]["quats"][0].reshape(-1, 4)
+            unfiltered_opacities = predictions["splats_unfiltered"]["opacities"][0].reshape(-1)
+            unfiltered_sh = predictions["splats_unfiltered"]["sh"][0]  # [N, 1, 3]
 
-        for i in range(S):
-            start = i * splats_per_view
-            if i == S - 1:
-                end = len(means)
-            else:
+            # Apply confidence filtering per view
+            filtered_splats_list = []
+            total_filtered = 0
+
+            for i in range(S):
+                start = i * splats_per_view
                 end = (i + 1) * splats_per_view
 
-            means_i = means[start:end]
-            scales_i = scales[start:end]
-            quats_i = quats[start:end]
-            opacities_i = opacities[start:end]
-            sh_i = sh[start:end]
+                # Extract splats for this view
+                means_i = unfiltered_means[start:end]
+                scales_i = unfiltered_scales[start:end]
+                quats_i = unfiltered_quats[start:end]
+                opacities_i = unfiltered_opacities[start:end]
+                sh_i = unfiltered_sh[start:end]
 
-            splats_i = {
-                "means": means_i,
-                "quats": quats_i,
-                "scales": scales_i,
-                "opacities": opacities_i,
-                "sh": sh_i,
-            }
+                # Apply confidence filtering for this view
+                conf_view = predictions["gs_depth_conf"][0, i].flatten()  # [H*W]
+                if conf_view.numel() == splats_per_view:  # Ensure shapes match
+                    threshold = torch.quantile(conf_view, 0.3)  # 30th percentile (top 70%)
+                    valid_mask = conf_view >= threshold
 
-            print(f"    - View {i}: {len(means_i)} splats")
+                    # Mark invalid splats with opacity = -1 (sentinel value)
+                    opacities_i = torch.where(valid_mask, opacities_i, torch.tensor(-1.0, device=opacities_i.device))
+                    filtered_count = valid_mask.sum().item()
+                    total_filtered += filtered_count
+                    print(f"    - View {i}: {filtered_count}/{splats_per_view} splats kept (filtered)")
+                else:
+                    print(f"    - View {i}: confidence shape mismatch, keeping all {splats_per_view} splats")
+                    filtered_count = splats_per_view
+                    total_filtered += filtered_count
 
-            zip_path = outdir / f"splats_view_{i}.zip"
-            save_splat_artifacts(zip_path, splats_i, H, W)
-            print(f"  - Saved view {i} splats to {zip_path}")
+                splats_i = {
+                    "means": means_i,
+                    "quats": quats_i,
+                    "scales": scales_i,
+                    "opacities": opacities_i,
+                    "sh": sh_i,
+                }
+
+                zip_path = outdir / f"splats_view_{i}.zip"
+                save_splat_artifacts(zip_path, splats_i, H, W)
+                print(f"  - Saved view {i} splats to {zip_path}")
+
+            print(f"  - Total filtered splats across all views: {total_filtered}/{total_splats}")
 
         # Render video using the same filtered splats from predictions
         num_views = S
