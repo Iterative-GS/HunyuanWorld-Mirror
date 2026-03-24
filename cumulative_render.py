@@ -21,6 +21,9 @@ from src.models.models.rasterization import GaussianSplatRenderer
 import torch
 from PIL import Image
 from plyfile import PlyData
+import zipfile
+import OpenEXR
+import Imath
 
 from src.models.models.worldmirror import WorldMirror
 from src.utils.save_utils import save_image_png
@@ -58,6 +61,68 @@ def load_splats_from_ply(ply_path):
         "opacities": opacities.unsqueeze(0), # [1, N]
         "sh": sh.unsqueeze(0)             # [1, N, 1, 3]
     }
+
+
+def load_splats_from_exr(exr_zip_path):
+    """
+    Load Gaussian splats from EXR zip file and convert to tensor format expected by rasterizer.
+
+    Args:
+        exr_zip_path: Path to EXR zip file
+
+    Returns:
+        Dictionary with splat tensors in format expected by rasterize_batches
+    """
+    with zipfile.ZipFile(exr_zip_path, 'r') as z:
+        exr_filename = z.namelist()[0]
+        with z.open(exr_filename) as f:
+            exr = OpenEXR.InputFile(f)
+            header = exr.header()
+            dw = header['dataWindow']
+            width = dw.max.x - dw.min.x + 1
+            height = dw.max.y - dw.min.y + 1
+
+            # Read channels
+            means_0 = np.frombuffer(exr.channel('means_0'), dtype=np.float16).reshape(height, width)
+            means_1 = np.frombuffer(exr.channel('means_1'), dtype=np.float16).reshape(height, width)
+            means_2 = np.frombuffer(exr.channel('means_2'), dtype=np.float16).reshape(height, width)
+            means = np.stack([means_0, means_1, means_2], axis=-1).astype(np.float32)  # H x W x 3
+
+            quats_0 = np.frombuffer(exr.channel('quats_0'), dtype=np.float16).reshape(height, width)
+            quats_1 = np.frombuffer(exr.channel('quats_1'), dtype=np.float16).reshape(height, width)
+            quats_2 = np.frombuffer(exr.channel('quats_2'), dtype=np.float16).reshape(height, width)
+            quats_3 = np.frombuffer(exr.channel('quats_3'), dtype=np.float16).reshape(height, width)
+            quats = np.stack([quats_0, quats_1, quats_2, quats_3], axis=-1).astype(np.float32)  # H x W x 4
+
+            scales_0 = np.frombuffer(exr.channel('scales_0'), dtype=np.float16).reshape(height, width)
+            scales_1 = np.frombuffer(exr.channel('scales_1'), dtype=np.float16).reshape(height, width)
+            scales_2 = np.frombuffer(exr.channel('scales_2'), dtype=np.float16).reshape(height, width)
+            scales = np.stack([scales_0, scales_1, scales_2], axis=-1).astype(np.float32)  # H x W x 3
+
+            opacities_0 = np.frombuffer(exr.channel('opacities_0'), dtype=np.float16).reshape(height, width)
+            opacities = opacities_0.astype(np.float32)  # H x W
+
+            sh_0_0 = np.frombuffer(exr.channel('sh_0_0'), dtype=np.float16).reshape(height, width)
+            sh_0_1 = np.frombuffer(exr.channel('sh_0_1'), dtype=np.float16).reshape(height, width)
+            sh_0_2 = np.frombuffer(exr.channel('sh_0_2'), dtype=np.float16).reshape(height, width)
+            sh = np.stack([sh_0_0, sh_0_1, sh_0_2], axis=-1).astype(np.float32)  # H x W x 3
+
+            # Flatten to N x ...
+            N = height * width
+            means_flat = means.reshape(N, 3)
+            quats_flat = quats.reshape(N, 4)
+            scales_flat = scales.reshape(N, 3)
+            opacities_flat = opacities.reshape(N)
+            sh_flat = sh.reshape(N, 3).unsqueeze(1)  # N x 1 x 3
+
+            # Convert to torch
+            return {
+                "means": torch.tensor(means_flat, dtype=torch.float32).unsqueeze(0),      # [1, N, 3]
+                "quats": torch.tensor(quats_flat, dtype=torch.float32).unsqueeze(0),      # [1, N, 4]
+                "scales": torch.tensor(scales_flat, dtype=torch.float32).unsqueeze(0),    # [1, N, 3]
+                "opacities": torch.tensor(opacities_flat, dtype=torch.float32).unsqueeze(0), # [1, N]
+                "sh": torch.tensor(sh_flat, dtype=torch.float32).unsqueeze(0)             # [1, N, 1, 3]
+            }
 
 
 def main():
@@ -104,13 +169,13 @@ def main():
         # Load splats for views 0 to i
         all_splats = []
         for j in range(i + 1):
-            ply_path = infer_dir / f"splats_view_{j}.ply"
-            if not ply_path.exists():
-                raise FileNotFoundError(f"Splat file not found: {ply_path}")
+            zip_path = infer_dir / f"splats_view_{j}.zip"
+            if not zip_path.exists():
+                raise FileNotFoundError(f"Splat file not found: {zip_path}")
 
-            splats_j = load_splats_from_ply(ply_path)
+            splats_j = load_splats_from_exr(zip_path)
             all_splats.append(splats_j)
-            print(f"  📄 Loaded splats_view_{j}.ply: {splats_j['means'].shape[1]} splats")
+            print(f"  📄 Loaded splats_view_{j}.zip: {splats_j['means'].shape[1]} splats")
 
         # Concatenate splats along the N dimension (dim=1)
         combined_splats = {

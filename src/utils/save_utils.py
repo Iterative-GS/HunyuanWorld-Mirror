@@ -11,6 +11,10 @@ from plyfile import PlyData, PlyElement
 from io import BytesIO
 import json
 import os
+import zipfile
+import tempfile
+import OpenEXR
+import Imath
 
 def save_camera_params(extrinsics, intrinsics, target_dir):
     """
@@ -283,6 +287,70 @@ def process_ply_to_splat(plydata, output_path):
     value = buffer.getvalue()
     with open(output_path, "wb") as f:
         f.write(value)
-    
+
     return output_path
+
+
+def save_splat_artifacts(path: Path, splats: dict, H: int, W: int) -> None:
+    """
+    Save Gaussian splats as zipped EXR files, preserving pixel alignment.
+
+    Args:
+        path: Output zip file path
+        splats: Dictionary containing splat tensors [N, ...] where N = H*W
+        H: Height of the image
+        W: Width of the image
+    """
+    # Reshape splats to H x W x attrs
+    N = H * W
+    means = splats["means"].reshape(H, W, 3).cpu().numpy()  # [H, W, 3]
+    quats = splats["quats"].reshape(H, W, 4).cpu().numpy()  # [H, W, 4]
+    scales = splats["scales"].reshape(H, W, 3).cpu().numpy()  # [H, W, 3]
+    opacities = splats["opacities"].reshape(H, W, 1).cpu().numpy()  # [H, W, 1]
+    sh = splats["sh"].reshape(H, W, 3).cpu().numpy()  # [H, W, 3] (assuming sh_degree=0)
+
+    # Create header with channels
+    header = OpenEXR.Header(W, H)
+    channels = {}
+    channel_data = {}
+
+    # Means channels
+    for i in range(3):
+        ch_name = f"means_{i}"
+        channels[ch_name] = Imath.Channel(Imath.PixelType(Imath.PixelType.HALF))
+        channel_data[ch_name] = means[:, :, i].astype(np.float16).tobytes()
+
+    # Quats channels
+    for i in range(4):
+        ch_name = f"quats_{i}"
+        channels[ch_name] = Imath.Channel(Imath.PixelType(Imath.PixelType.HALF))
+        channel_data[ch_name] = quats[:, :, i].astype(np.float16).tobytes()
+
+    # Scales channels
+    for i in range(3):
+        ch_name = f"scales_{i}"
+        channels[ch_name] = Imath.Channel(Imath.PixelType(Imath.PixelType.HALF))
+        channel_data[ch_name] = scales[:, :, i].astype(np.float16).tobytes()
+
+    # Opacities channel
+    ch_name = "opacities_0"
+    channels[ch_name] = Imath.Channel(Imath.PixelType(Imath.PixelType.HALF))
+    channel_data[ch_name] = opacities[:, :, 0].astype(np.float16).tobytes()
+
+    # SH channels
+    for i in range(3):
+        ch_name = f"sh_0_{i}"
+        channels[ch_name] = Imath.Channel(Imath.PixelType(Imath.PixelType.HALF))
+        channel_data[ch_name] = sh[:, :, i].astype(np.float16).tobytes()
+
+    header["channels"] = channels
+
+    # Write EXR to temp file and zip it
+    path.parent.mkdir(exist_ok=True, parents=True)
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        with tempfile.NamedTemporaryFile(suffix=".exr") as f:
+            exr = OpenEXR.OutputFile(f.name, header)
+            exr.writePixels(channel_data)
+            exr.close()
+            z.write(f.name, "00000.exr")
 

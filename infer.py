@@ -17,7 +17,7 @@ from src.models.utils.geometry import depth_to_world_coords_points
 from src.models.utils.geometry import create_pixel_coordinate_grid
 
 from src.utils.save_utils import save_depth_png, save_depth_npy, save_normal_png
-from src.utils.save_utils import save_scene_ply, save_gs_ply, save_points_ply
+from src.utils.save_utils import save_scene_ply, save_gs_ply, save_points_ply, save_splat_artifacts
 from src.utils.render_utils import render_interpolated_video
 
 from src.utils.build_pycolmap_recon import build_pycolmap_reconstruction
@@ -347,96 +347,49 @@ def main():
             save_normal_png(normal_dir / f"normal_{i:04d}.png", predictions["normals"][0, i])
         print(f"  - Saved {S} normal maps to {normal_dir}")
 
-    # Save Gaussians PLY and render video
+    # Save Gaussians as EXR zips and render video
     if "splats" in predictions and args.save_gs:
-        # Get Gaussian parameters (already filtered by GaussianSplatRenderer)
+        # Get Gaussian parameters
         means = predictions["splats"]["means"][0].reshape(-1, 3)
         scales = predictions["splats"]["scales"][0].reshape(-1, 3)
         quats = predictions["splats"]["quats"][0].reshape(-1, 4)
-        if "sh" in predictions["splats"]:
-            # Extract DC SH component and convert to RGB for PLY visualization
-            dc_sh = predictions["splats"]["sh"][0][:, 0, :]  # [N, 3]
-            colors = SH2RGB(dc_sh)  # [N, 3] RGB
-        else:
-            colors = predictions["splats"]["colors"][0]  # [N, 3]
         opacities = predictions["splats"]["opacities"][0].reshape(-1)
+        sh = predictions["splats"]["sh"][0]  # [N, 1, 3]
 
-        print(f"  - Total splats after processing: {len(means)}")
+        print(f"  - Total splats: {len(means)}")
         print(f"  - Expected splats per view (H*W): {H * W}")
         print(f"  - Number of views: {S}")
-        print(f"  - Total expected without filtering: {S * H * W}")
 
-        # Save Gaussian PLY
-        ply_path = outdir / "gaussians.ply"
-        save_gs_ply(
-            ply_path,
-            means,
-            scales,
-            quats,
-            colors,
-            opacities,
-        )
+        # Save individual view splats as EXR zips
+        splats_per_view = len(means) // S
+        print(f"  - Splats per view: {splats_per_view}")
 
-        # Save individual view splats
-        # Use actual per-view counts from confidence filtering
-        if "splat_counts" in predictions:
-            splat_counts = predictions["splat_counts"]
-            print(f"  - Per-view splat counts after filtering: {splat_counts}")
+        for i in range(S):
+            start = i * splats_per_view
+            if i == S - 1:
+                end = len(means)
+            else:
+                end = (i + 1) * splats_per_view
 
-            start = 0
-            for i in range(S):
-                count = splat_counts[i]
-                end = start + count
+            means_i = means[start:end]
+            scales_i = scales[start:end]
+            quats_i = quats[start:end]
+            opacities_i = opacities[start:end]
+            sh_i = sh[start:end]
 
-                means_i = means[start:end]
-                scales_i = scales[start:end]
-                quats_i = quats[start:end]
-                colors_i = colors[start:end]
-                opacities_i = opacities[start:end]
+            splats_i = {
+                "means": means_i,
+                "quats": quats_i,
+                "scales": scales_i,
+                "opacities": opacities_i,
+                "sh": sh_i,
+            }
 
-                print(f"    - View {i}: {count} splats")
+            print(f"    - View {i}: {len(means_i)} splats")
 
-                ply_path = outdir / f"splats_view_{i}.ply"
-                save_gs_ply(
-                    ply_path,
-                    means_i,
-                    scales_i,
-                    quats_i,
-                    colors_i,
-                    opacities_i,
-                )
-                print(f"  - Saved view {i} splats to {ply_path}")
-                start = end
-        else:
-            # Fallback to approximation if counts not available
-            splats_per_view = len(means) // S
-            print(f"  - No splat counts available, using approximation: {splats_per_view} per view")
-
-            for i in range(S):
-                start = i * splats_per_view
-                if i == S - 1:
-                    end = len(means)
-                else:
-                    end = (i + 1) * splats_per_view
-
-                means_i = means[start:end]
-                scales_i = scales[start:end]
-                quats_i = quats[start:end]
-                colors_i = colors[start:end]
-                opacities_i = opacities[start:end]
-
-                print(f"    - View {i}: {len(means_i)} splats")
-
-                ply_path = outdir / f"splats_view_{i}.ply"
-                save_gs_ply(
-                    ply_path,
-                    means_i,
-                    scales_i,
-                    quats_i,
-                    colors_i,
-                    opacities_i,
-                )
-                print(f"  - Saved view {i} splats to {ply_path}")
+            zip_path = outdir / f"splats_view_{i}.zip"
+            save_splat_artifacts(zip_path, splats_i, H, W)
+            print(f"  - Saved view {i} splats to {zip_path}")
 
         # Render video using the same filtered splats from predictions
         num_views = S
