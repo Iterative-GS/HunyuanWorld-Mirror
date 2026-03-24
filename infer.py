@@ -123,8 +123,8 @@ def main():
     parser.add_argument("--confidence_percentile", type=float, default=10.0, help="Confidence percentile threshold for filtering (0-100, filters bottom X percent)")
     parser.add_argument("--edge_normal_threshold", type=float, default=5.0, help="Normal angle threshold in degrees for edge detection")
     parser.add_argument("--edge_depth_threshold", type=float, default=0.03, help="Relative depth threshold for edge detection")
-    parser.add_argument("--apply_confidence_mask", action="store_true", default=False, help="Apply confidence-based filtering")
-    parser.add_argument("--apply_edge_mask", action="store_true", default=False, help="Apply edge-based filtering")
+    parser.add_argument("--apply_confidence_mask", action="store_true", default=True, help="Apply confidence-based filtering")
+    parser.add_argument("--apply_edge_mask", action="store_true", default=True, help="Apply edge-based filtering")
     parser.add_argument("--apply_sky_mask", action="store_true", default=False, help="Apply sky mask filtering")
     # Save flags
     parser.add_argument("--save_pointmap", action="store_true", default=False, help="Save points PLY")
@@ -441,6 +441,7 @@ def main():
         # Render video using the same filtered splats from predictions
         num_views = S
         if args.save_rendered:
+            model.gs_renderer.enable_prune = False
             e4x4 = predictions['camera_poses']
             k3x3 = predictions['camera_intrs']
             render_interpolated_video(model.gs_renderer, predictions["splats"], e4x4, k3x3, (H, W), outdir / "rendered", interp_per_pair=15, loop_reverse=num_views==1)
