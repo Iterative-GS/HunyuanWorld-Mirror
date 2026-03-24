@@ -287,43 +287,51 @@ def main():
         
     # save pointmap with filtering
     if "pts3d" in predictions and args.save_pointmap:
+        print("Computing filter mask for pointmap...")
+        
+        # Prepare data for mask computation
+        pts3d_conf_np = predictions["pts3d_conf"][0].detach().cpu().numpy()  # [S, H, W]
+        depth_preds_np = predictions["depth"][0].detach().cpu().numpy()  # [S, H, W, 1]
+        normal_preds_np = predictions["normals"][0].detach().cpu().numpy()  # [S, H, W, 3]
+        
+        # Compute comprehensive filter mask
+        final_mask = create_filter_mask(
+            pts3d_conf=pts3d_conf_np,
+            depth_preds=depth_preds_np,
+            normal_preds=normal_preds_np,
+            sky_mask=sky_mask,
+            confidence_percentile=args.confidence_percentile,
+            edge_normal_threshold=args.edge_normal_threshold,
+            edge_depth_threshold=args.edge_depth_threshold,
+            apply_confidence_mask=args.apply_confidence_mask,
+            apply_edge_mask=args.apply_edge_mask,
+            apply_sky_mask=args.apply_sky_mask,
+        )  # [S, H, W]
+        
+        # Collect points and colors
         pts_list = []
-        colors_list = []
-
+        pts_colors_list = []
+        
         for i in range(S):
-            # compute mask for view i
-            pts3d_conf_i = predictions["pts3d_conf"][0, i:i+1]  # [1, H, W]
-            depth_preds_i = predictions["depth"][0, i:i+1]  # [1, H, W, 1]
-            normal_preds_i = predictions["normals"][0, i:i+1]  # [1, H, W, 3]
-            sky_mask_i = sky_mask[i:i+1]  # [1, H, W]
-            mask_i = create_filter_mask(
-                pts3d_conf=pts3d_conf_i.detach().cpu().numpy(),
-                depth_preds=depth_preds_i.detach().cpu().numpy(),
-                normal_preds=normal_preds_i.detach().cpu().numpy(),
-                sky_mask=sky_mask_i,
-                confidence_percentile=args.confidence_percentile,
-                edge_normal_threshold=args.edge_normal_threshold,
-                edge_depth_threshold=args.edge_depth_threshold,
-                apply_confidence_mask=args.apply_confidence_mask,
-                apply_edge_mask=args.apply_edge_mask,
-                apply_sky_mask=args.apply_sky_mask,
-            )[0]  # [H, W]
-
             pts = predictions["pts3d"][0, i]  # [H,W,3]
             img_colors = imgs[0, i].permute(1, 2, 0)  # [H, W, 3]
             img_colors = (img_colors * 255).to(torch.uint8)
-
-            pts_filtered = pts[mask_i]  # [N, 3]
-            colors_filtered = img_colors[mask_i]  # [N, 3]
-
-            pts_list.append(pts_filtered.reshape(-1, 3))
-            colors_list.append(colors_filtered.reshape(-1, 3))
+            
+            pts_list.append(pts.reshape(-1, 3))
+            pts_colors_list.append(img_colors.reshape(-1, 3))
 
         all_pts = torch.cat(pts_list, dim=0)
-        all_colors = torch.cat(colors_list, dim=0)
-
-        save_scene_ply(outdir / "pts_from_pointmap.ply", all_pts, all_colors)
-        print(f"  - Saved {len(all_pts)} filtered points to {outdir / 'pts_from_pointmap.ply'}")
+        all_colors = torch.cat(pts_colors_list, dim=0)
+        
+        # Apply filter mask
+        final_mask_flat = final_mask.reshape(-1)  # Flatten to [S*H*W]
+        final_mask_torch = torch.from_numpy(final_mask_flat).to(all_pts.device)
+        
+        filtered_pts = all_pts[final_mask_torch]
+        filtered_colors = all_colors[final_mask_torch]
+        
+        save_scene_ply(outdir / "pts_from_pointmap.ply", filtered_pts, filtered_colors)
+        print(f"  - Saved {len(filtered_pts)} filtered points to {outdir / 'pts_from_pointmap.ply'}")
 
     # save depthmap
     if "depth" in predictions and args.save_depth:
@@ -377,24 +385,6 @@ def main():
 
             start = 0
             for i in range(S):
-                # compute mask for view i
-                pts3d_conf_i = predictions["pts3d_conf"][0, i:i+1]  # [1, H, W]
-                depth_preds_i = predictions["depth"][0, i:i+1]  # [1, H, W, 1]
-                normal_preds_i = predictions["normals"][0, i:i+1]  # [1, H, W, 3]
-                sky_mask_i = sky_mask[i:i+1]  # [1, H, W]
-                mask_i = create_filter_mask(
-                    pts3d_conf=pts3d_conf_i.detach().cpu().numpy(),
-                    depth_preds=depth_preds_i.detach().cpu().numpy(),
-                    normal_preds=normal_preds_i.detach().cpu().numpy(),
-                    sky_mask=sky_mask_i,
-                    confidence_percentile=args.confidence_percentile,
-                    edge_normal_threshold=args.edge_normal_threshold,
-                    edge_depth_threshold=args.edge_depth_threshold,
-                    apply_confidence_mask=args.apply_confidence_mask,
-                    apply_edge_mask=args.apply_edge_mask,
-                    apply_sky_mask=args.apply_sky_mask,
-                )[0]  # [H, W]
-
                 count = splat_counts[i]
                 end = start + count
 
@@ -404,15 +394,7 @@ def main():
                 colors_i = colors[start:end]
                 opacities_i = opacities[start:end]
 
-                # Apply mask
-                mask_i_flat = mask_i.flatten()[:len(means_i)]
-                means_i = means_i[mask_i_flat]
-                scales_i = scales_i[mask_i_flat]
-                quats_i = quats_i[mask_i_flat]
-                colors_i = colors_i[mask_i_flat]
-                opacities_i = opacities_i[mask_i_flat]
-
-                print(f"    - View {i}: {len(means_i)} splats")
+                print(f"    - View {i}: {count} splats")
 
                 ply_path = outdir / f"splats_view_{i}.ply"
                 save_gs_ply(
@@ -431,24 +413,6 @@ def main():
             print(f"  - No splat counts available, using approximation: {splats_per_view} per view")
 
             for i in range(S):
-                # compute mask for view i
-                pts3d_conf_i = predictions["pts3d_conf"][0, i:i+1]  # [1, H, W]
-                depth_preds_i = predictions["depth"][0, i:i+1]  # [1, H, W, 1]
-                normal_preds_i = predictions["normals"][0, i:i+1]  # [1, H, W, 3]
-                sky_mask_i = sky_mask[i:i+1]  # [1, H, W]
-                mask_i = create_filter_mask(
-                    pts3d_conf=pts3d_conf_i.detach().cpu().numpy(),
-                    depth_preds=depth_preds_i.detach().cpu().numpy(),
-                    normal_preds=normal_preds_i.detach().cpu().numpy(),
-                    sky_mask=sky_mask_i,
-                    confidence_percentile=args.confidence_percentile,
-                    edge_normal_threshold=args.edge_normal_threshold,
-                    edge_depth_threshold=args.edge_depth_threshold,
-                    apply_confidence_mask=args.apply_confidence_mask,
-                    apply_edge_mask=args.apply_edge_mask,
-                    apply_sky_mask=args.apply_sky_mask,
-                )[0]  # [H, W]
-
                 start = i * splats_per_view
                 if i == S - 1:
                     end = len(means)
@@ -460,14 +424,6 @@ def main():
                 quats_i = quats[start:end]
                 colors_i = colors[start:end]
                 opacities_i = opacities[start:end]
-
-                # Apply mask
-                mask_i_flat = mask_i.flatten()[:len(means_i)]
-                means_i = means_i[mask_i_flat]
-                scales_i = scales_i[mask_i_flat]
-                quats_i = quats_i[mask_i_flat]
-                colors_i = colors_i[mask_i_flat]
-                opacities_i = opacities_i[mask_i_flat]
 
                 print(f"    - View {i}: {len(means_i)} splats")
 
@@ -495,8 +451,30 @@ def main():
 
     # Build and export COLMAP reconstruction (images + sparse)
     if args.save_colmap:
+        print("Computing filter mask for COLMAP reconstruction...")
+        
         final_width, final_height = new_width, new_height
         print(f"colmap_width: {final_width}, colmap_height: {final_height}")
+        
+        # Prepare data for mask computation (reuse from pointmap if not already computed)
+        if not ("pts3d" in predictions and args.save_pointmap):
+            pts3d_conf_np = predictions["pts3d_conf"][0].detach().cpu().numpy()  # [S, H, W]
+            depth_preds_np = predictions["depth"][0].detach().cpu().numpy()  # [S, H, W, 1]
+            normal_preds_np = predictions["normals"][0].detach().cpu().numpy()  # [S, H, W, 3]
+            
+            # Compute comprehensive filter mask
+            final_mask = create_filter_mask(
+                pts3d_conf=pts3d_conf_np,
+                depth_preds=depth_preds_np,
+                normal_preds=normal_preds_np,
+                sky_mask=sky_mask,
+                confidence_percentile=args.confidence_percentile,
+                edge_normal_threshold=args.edge_normal_threshold,
+                edge_depth_threshold=args.edge_depth_threshold,
+                apply_confidence_mask=args.apply_confidence_mask,
+                apply_edge_mask=args.apply_edge_mask,
+                apply_sky_mask=args.apply_sky_mask,
+            )  # [S, H, W]
         
         # Prepare extrinsics/intrinsics (camera-from-world) using resized image size
         e3x4, intr = vector_to_camera_matrices(predictions["camera_params"], image_hw=(final_height, final_width))
@@ -520,24 +498,6 @@ def main():
         # Use the SAME coordinate transformation as GaussianSplatRenderer.prepare_splats
         # to ensure consistency between Gaussian PLY and depth-based sparse points
         for i in range(S):
-            # compute mask for view i
-            pts3d_conf_i = predictions["pts3d_conf"][0, i:i+1]  # [1, H, W]
-            depth_preds_i = predictions["depth"][0, i:i+1]  # [1, H, W, 1]
-            normal_preds_i = predictions["normals"][0, i:i+1]  # [1, H, W, 3]
-            sky_mask_i = sky_mask[i:i+1]  # [1, H, W]
-            filter_mask_frame = create_filter_mask(
-                pts3d_conf=pts3d_conf_i.detach().cpu().numpy(),
-                depth_preds=depth_preds_i.detach().cpu().numpy(),
-                normal_preds=normal_preds_i.detach().cpu().numpy(),
-                sky_mask=sky_mask_i,
-                confidence_percentile=args.confidence_percentile,
-                edge_normal_threshold=args.edge_normal_threshold,
-                edge_depth_threshold=args.edge_depth_threshold,
-                apply_confidence_mask=args.apply_confidence_mask,
-                apply_edge_mask=args.apply_edge_mask,
-                apply_sky_mask=args.apply_sky_mask,
-            )[0]  # [H, W]
-
             d = predictions["depth"][0, i, :, :, 0]
             w2c = extrinsics[i][:3, :4]  # [3, 4] camera-to-world
             w2c = torch.cat([w2c, torch.tensor([[0, 0, 0, 1]], device=w2c.device)], dim=0)  # [4,4]
@@ -546,11 +506,11 @@ def main():
             pts_i, _, mask = depth_to_world_coords_points(d[None], c2w[None], K[None])
 
             img_colors = (imgs[0, i].permute(1, 2, 0) * 255).to(torch.uint8)
-
+            
             # Apply filter mask from mask computation
-            filter_mask_frame = torch.from_numpy(filter_mask_frame).to(mask.device)  # [H, W]
+            filter_mask_frame = torch.from_numpy(final_mask[i]).to(mask.device)  # [H, W]
             valid = mask[0] & filter_mask_frame  # Combine depth validity with filter mask
-
+            
             if valid.sum().item() == 0:
                 continue
             xyf_np = xyf_grid[i][valid.cpu().numpy()]  # [N,3] int32
