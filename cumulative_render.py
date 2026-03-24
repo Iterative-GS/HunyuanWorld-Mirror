@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 
 import numpy as np
+from src.models.models.rasterization import GaussianSplatRenderer
 import torch
 from PIL import Image
 from plyfile import PlyData
@@ -93,8 +94,7 @@ def main():
 
     # Load model for rendering
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = WorldMirror.from_pretrained("tencent/HunyuanWorld-Mirror").to(device)
-    gs_renderer = model.gs_renderer
+    gs_renderer = GaussianSplatRenderer().to(device)
 
     print("🎨 Starting cumulative rendering...")
 
@@ -114,11 +114,11 @@ def main():
 
         # Concatenate splats along the N dimension (dim=1)
         combined_splats = {
-            "means": torch.cat([s["means"] for s in all_splats], dim=1),
-            "quats": torch.cat([s["quats"] for s in all_splats], dim=1),
-            "scales": torch.cat([s["scales"] for s in all_splats], dim=1),
-            "opacities": torch.cat([s["opacities"] for s in all_splats], dim=1),
-            "sh": torch.cat([s["sh"] for s in all_splats], dim=1),
+            "means": torch.cat([s["means"].to(device) for s in all_splats], dim=1),
+            "quats": torch.cat([s["quats"].to(device) for s in all_splats], dim=1),
+            "scales": torch.cat([s["scales"].to(device) for s in all_splats], dim=1),
+            "opacities": torch.cat([s["opacities"].to(device) for s in all_splats], dim=1),
+            "sh": torch.cat([s["sh"].to(device) for s in all_splats], dim=1),
         }
 
         total_splats = combined_splats["means"].shape[1]
