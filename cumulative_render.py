@@ -15,7 +15,6 @@ import argparse
 import json
 import os
 from pathlib import Path
-import zipfile
 
 import numpy as np
 from src.models.models.rasterization import GaussianSplatRenderer
@@ -59,49 +58,6 @@ def load_splats_from_ply(ply_path):
         "opacities": opacities.unsqueeze(0), # [1, N]
         "sh": sh.unsqueeze(0)             # [1, N, 1, 3]
     }
-
-
-def load_splats_from_zip(zip_path):
-    """
-    Load Gaussian splats from zip file containing numpy arrays and convert to tensor format.
-
-    Args:
-        zip_path: Path to zip file containing splat tensors
-
-    Returns:
-        Dictionary with splat tensors in format expected by rasterize_batches
-    """
-    splats_dict = {}
-    mask = None
-
-    with zipfile.ZipFile(zip_path, "r") as z:
-        for file_name in z.namelist():
-            if file_name.endswith(".npy"):
-                with z.open(file_name) as f:
-                    arr = np.load(f)
-                    key = file_name[:-4]  # Remove .npy extension
-                    if key == "mask":
-                        mask = arr.astype(bool)
-                    else:
-                        splats_dict[key] = torch.tensor(arr, dtype=torch.float32)
-
-    # Apply mask if present
-    if mask is not None:
-        for key in splats_dict:
-            if key in ["means", "scales", "quats", "opacities", "sh", "colors"]:
-                # Flatten to [H*W, D], apply mask, then reshape back to [1, N, D]
-                original_shape = splats_dict[key].shape
-                flat = splats_dict[key].reshape(-1, original_shape[-1])
-                masked = flat[mask.flatten()]
-                splats_dict[key] = masked.unsqueeze(0)  # [1, N, D]
-    else:
-        # No mask, just flatten and add batch dim
-        for key in splats_dict:
-            if key in ["means", "scales", "quats", "opacities", "sh", "colors"]:
-                flat = splats_dict[key].reshape(-1, splats_dict[key].shape[-1])
-                splats_dict[key] = flat.unsqueeze(0)  # [1, N, D]
-
-    return splats_dict
 
 
 def main():
@@ -148,19 +104,13 @@ def main():
         # Load splats for views 0 to i
         all_splats = []
         for j in range(i + 1):
-            zip_path = infer_dir / f"splats_view_{j}.zip"
             ply_path = infer_dir / f"splats_view_{j}.ply"
+            if not ply_path.exists():
+                raise FileNotFoundError(f"Splat file not found: {ply_path}")
 
-            if zip_path.exists():
-                splats_j = load_splats_from_zip(zip_path)
-                print(f"  📦 Loaded splats_view_{j}.zip: {splats_j['means'].shape[1]} splats")
-            elif ply_path.exists():
-                splats_j = load_splats_from_ply(ply_path)
-                print(f"  📄 Loaded splats_view_{j}.ply: {splats_j['means'].shape[1]} splats")
-            else:
-                raise FileNotFoundError(f"Neither splats_view_{j}.zip nor splats_view_{j}.ply found")
-
+            splats_j = load_splats_from_ply(ply_path)
             all_splats.append(splats_j)
+            print(f"  📄 Loaded splats_view_{j}.ply: {splats_j['means'].shape[1]} splats")
 
         # Concatenate splats along the N dimension (dim=1)
         combined_splats = {
