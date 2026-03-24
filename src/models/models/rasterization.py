@@ -206,7 +206,7 @@ class GaussianSplatRenderer(nn.Module):
             splats, splat_counts = self.apply_confidence_filter(splats, predictions["gs_depth_conf"])
             predictions["splat_counts"] = splat_counts
 
-        if self.enable_prune:
+        if False:
             splats = self.prune_gs(splats, voxel_size=self.voxel_size)
 
         predictions["splats"] = splats
