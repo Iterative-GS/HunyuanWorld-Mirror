@@ -11,6 +11,8 @@ from plyfile import PlyData, PlyElement
 from io import BytesIO
 import json
 import os
+import zipfile
+import tempfile
 
 def save_camera_params(extrinsics, intrinsics, target_dir):
     """
@@ -285,4 +287,39 @@ def process_ply_to_splat(plydata, output_path):
         f.write(value)
     
     return output_path
+
+
+def save_splats_zip(path: Path, splats_dict: dict, mask: np.ndarray = None) -> None:
+    """
+    Save Gaussian splat tensors to a zip file containing numpy arrays.
+    Preserves HxW structure for pixel-aligned loading.
+
+    Args:
+        path: Output zip file path (e.g., splats_view_0.zip)
+        splats_dict: Dictionary with splat tensors:
+            - means: [H, W, 3]
+            - scales: [H, W, 3]
+            - quats: [H, W, 4]
+            - opacities: [H, W, 1]
+            - sh: [H, W, 3] or colors: [H, W, 3]
+        mask: Optional [H, W] boolean mask for valid splats
+    """
+    path.parent.mkdir(exist_ok=True, parents=True)
+
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        # Save each tensor as .npy
+        for key, tensor in splats_dict.items():
+            if isinstance(tensor, torch.Tensor):
+                arr = tensor.detach().cpu().numpy()
+            else:
+                arr = tensor
+            with tempfile.NamedTemporaryFile(suffix=".npy") as f:
+                np.save(f.name, arr)
+                z.write(f.name, f"{key}.npy")
+
+        # Save mask if provided
+        if mask is not None:
+            with tempfile.NamedTemporaryFile(suffix=".npy") as f:
+                np.save(f.name, mask.astype(np.bool_))
+                z.write(f.name, "mask.npy")
 

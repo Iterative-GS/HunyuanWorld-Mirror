@@ -17,7 +17,7 @@ from src.models.utils.geometry import depth_to_world_coords_points
 from src.models.utils.geometry import create_pixel_coordinate_grid
 
 from src.utils.save_utils import save_depth_png, save_depth_npy, save_normal_png
-from src.utils.save_utils import save_scene_ply, save_gs_ply, save_points_ply
+from src.utils.save_utils import save_scene_ply, save_gs_ply, save_points_ply, save_splats_zip
 from src.utils.render_utils import render_interpolated_video
 
 from src.utils.build_pycolmap_recon import build_pycolmap_reconstruction
@@ -360,6 +360,59 @@ def main():
         print(f"  - Expected splats per view (H*W): {H * W}")
         print(f"  - Number of views: {S}")
         print(f"  - Total expected without filtering: {S * H * W}")
+
+        # Save splat tensors as zip files (preserving HxW structure)
+        print(f"  - Saving splat tensors as zip files...")
+        for i in range(S):
+            # Compute mask for view i
+            pts3d_conf_i = predictions["pts3d_conf"][0, i:i+1]  # [1, H, W]
+            depth_preds_i = predictions["depth"][0, i:i+1]  # [1, H, W, 1]
+            normal_preds_i = predictions["normals"][0, i:i+1]  # [1, H, W, 3]
+            sky_mask_i = sky_mask[i:i+1]  # [1, H, W]
+            mask_i = create_filter_mask(
+                pts3d_conf=pts3d_conf_i.detach().cpu().numpy(),
+                depth_preds=depth_preds_i.detach().cpu().numpy(),
+                normal_preds=normal_preds_i.detach().cpu().numpy(),
+                sky_mask=sky_mask_i,
+                confidence_percentile=args.confidence_percentile,
+                edge_normal_threshold=args.edge_normal_threshold,
+                edge_depth_threshold=args.edge_depth_threshold,
+                apply_confidence_mask=args.apply_confidence_mask,
+                apply_edge_mask=args.apply_edge_mask,
+                apply_sky_mask=args.apply_sky_mask,
+            )[0]  # [H, W]
+
+            start = i * (H * W)
+            end = min((i + 1) * (H * W), len(means))
+
+            # Reshape to [H, W, D]
+            means_i = means[start:end].reshape(H, W, 3)
+            scales_i = scales[start:end].reshape(H, W, 3)
+            quats_i = quats[start:end].reshape(H, W, 4)
+            opacities_i = opacities[start:end].reshape(H, W, 1)
+            if "sh" in predictions["splats"]:
+                sh_i = predictions["splats"]["sh"][0][start:end].reshape(H, W, 1, 3)  # [H, W, 1, 3]
+                sh_i = sh_i.squeeze(2)  # [H, W, 3]
+                splats_dict = {
+                    "means": means_i,
+                    "scales": scales_i,
+                    "quats": quats_i,
+                    "opacities": opacities_i,
+                    "sh": sh_i
+                }
+            else:
+                colors_i = colors[start:end].reshape(H, W, 3)
+                splats_dict = {
+                    "means": means_i,
+                    "scales": scales_i,
+                    "quats": quats_i,
+                    "opacities": opacities_i,
+                    "colors": colors_i
+                }
+
+            zip_path = outdir / f"splats_view_{i}.zip"
+            save_splats_zip(zip_path, splats_dict, mask_i)
+            print(f"    - Saved splat tensors for view {i} to {zip_path}")
 
         # Save Gaussian PLY
         ply_path = outdir / "gaussians.ply"
