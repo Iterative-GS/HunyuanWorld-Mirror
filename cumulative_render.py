@@ -100,7 +100,7 @@ def load_splats_from_zip(zip_path):
             if key in ["means", "scales", "quats", "opacities", "sh", "colors"]:
                 flat = splats_dict[key].reshape(-1, splats_dict[key].shape[-1])
                 splats_dict[key] = flat.unsqueeze(0)  # [1, N, D]
-
+    
     return splats_dict
 
 
@@ -182,7 +182,7 @@ def main():
         with torch.no_grad():
             colors, depths, _ = gs_renderer.rasterizer.rasterize_batches(
                 combined_splats["means"], combined_splats["quats"], combined_splats["scales"],
-                combined_splats["opacities"], combined_splats["sh"],
+                combined_splats["opacities"].squeeze(-1).unsqueeze(0), combined_splats["sh"],
                 viewmats, Ks, width=W, height=H, sh_degree=0
             )
 
