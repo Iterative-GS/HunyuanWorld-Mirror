@@ -413,7 +413,7 @@ def main():
             filtered_splats = predictions["splats"]
 
             # Flatten all views into one big splat array
-            print(len(filtered_splats["means"]))
+            print(len(filtered_splats["means"][0]))
             total_splats = filtered_splats["means"].shape[1]
             print(f"  - Saving splats for all views: {total_splats} total splats")
 
