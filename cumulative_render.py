@@ -139,7 +139,7 @@ def main():
     # Load model for rendering
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     gs_renderer = GaussianSplatRenderer().to(device)
-
+    gs_renderer.enable_conf_filter = True
     print("🎨 Starting cumulative rendering...")
 
     for i in range(num_views):
