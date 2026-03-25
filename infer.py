@@ -367,10 +367,27 @@ def main():
             unfiltered_opacities = predictions["splats_unfiltered"]["opacities"][0].reshape(-1)
             unfiltered_sh = predictions["splats_unfiltered"]["sh"][0]  # [N, 1, 3]
 
-            # Get confidence scores for all views
-            all_conf = predictions["gs_depth_conf"][0].flatten()  # [S*H*W]
+            # Compute filter mask for individual views
+            print("Computing filter mask for individual view splats...")
+            pts3d_conf_np = predictions["pts3d_conf"][0].detach().cpu().numpy()  # [S, H, W]
+            depth_preds_np = predictions["depth"][0].detach().cpu().numpy()  # [S, H, W, 1]
+            normal_preds_np = predictions["normals"][0].detach().cpu().numpy()  # [S, H, W, 3]
 
-            # Save individual view splats as EXR zips (pixel-aligned from unfiltered)
+            # Compute comprehensive filter mask for all views
+            filter_mask = create_filter_mask(
+                pts3d_conf=pts3d_conf_np,
+                depth_preds=depth_preds_np,
+                normal_preds=normal_preds_np,
+                sky_mask=sky_mask,
+                confidence_percentile=args.confidence_percentile,
+                edge_normal_threshold=args.edge_normal_threshold,
+                edge_depth_threshold=args.edge_depth_threshold,
+                apply_confidence_mask=args.apply_confidence_mask,
+                apply_edge_mask=args.apply_edge_mask,
+                apply_sky_mask=args.apply_sky_mask,
+            )  # [S, H, W]
+
+            # Save individual view splats as EXR zips (pixel-aligned with filtering applied)
             for i in range(S):
                 start = i * splats_per_view
                 end = (i + 1) * splats_per_view
@@ -380,6 +397,10 @@ def main():
                 quats_i = unfiltered_quats[start:end].reshape(H, W, 4)
                 opacities_i = unfiltered_opacities[start:end].reshape(H, W, 1)
                 sh_i = unfiltered_sh[start:end].reshape(H, W, 3)
+
+                # Apply filtering by marking filtered-out splats with opacity = -1
+                mask_i = filter_mask[i]  # [H, W] boolean mask for view i
+                opacities_i[~mask_i] = -1.0  # Mark filtered splats
 
                 splats_i = {
                     "means": means_i,
@@ -391,26 +412,10 @@ def main():
 
                 zip_path = outdir / f"splats_view_{i}.zip"
                 save_splat_artifacts(zip_path, splats_i, H, W)
-                print(f"  - Saved view {i} splats to {zip_path}")
+                kept_count = mask_i.sum()
+                print(f"  - Saved view {i} splats to {zip_path} ({kept_count}/{H*W} kept)")
 
-            # Compute and save masks for cumulative sets
-            for cumulative_views in range(S):
-                # Get confidence for views 0 to cumulative_views
-                end_idx = (cumulative_views + 1) * splats_per_view
-                conf_cum = all_conf[:end_idx]
 
-                # Apply global confidence filtering to the cumulative set
-                threshold = torch.quantile(conf_cum, min(1, 0.001 * cumulative_views**2))  # 1st percentile (top 99%)
-                valid_mask = conf_cum >= threshold
-
-                filtered_count = valid_mask.sum().item()
-                total_possible = end_idx
-                print(f"  - Cumulative views 0-{cumulative_views}: {filtered_count}/{total_possible} splats would be kept")
-
-                # Save mask as numpy array
-                mask_path = outdir / f"mask_cumulative_{cumulative_views}.npy"
-                np.save(mask_path, valid_mask.cpu().numpy())
-                print(f"  - Saved mask 0-{cumulative_views} to {mask_path}")
 
             # Save the exact splats used by render_interpolated_video as flat EXR
             # splats dict is already in [1, N, ...] format for flat EXR

@@ -318,30 +318,30 @@ def save_splat_artifacts(path: Path, splats: dict, H: int, W: int) -> None:
     for i in range(3):
         ch_name = f"means_{i}"
         channels[ch_name] = Imath.Channel(Imath.PixelType(Imath.PixelType.HALF))
-        channel_data[ch_name] = means[:, :, i].astype(np.float16).tobytes()
+        channel_data[ch_name] = means[:, :, i].astype(np.float32).tobytes()
 
     # Quats channels
     for i in range(4):
         ch_name = f"quats_{i}"
         channels[ch_name] = Imath.Channel(Imath.PixelType(Imath.PixelType.HALF))
-        channel_data[ch_name] = quats[:, :, i].astype(np.float16).tobytes()
+        channel_data[ch_name] = quats[:, :, i].astype(np.float32).tobytes()
 
     # Scales channels
     for i in range(3):
         ch_name = f"scales_{i}"
         channels[ch_name] = Imath.Channel(Imath.PixelType(Imath.PixelType.HALF))
-        channel_data[ch_name] = scales[:, :, i].astype(np.float16).tobytes()
+        channel_data[ch_name] = scales[:, :, i].astype(np.float32).tobytes()
 
     # Opacities channel
     ch_name = "opacities_0"
     channels[ch_name] = Imath.Channel(Imath.PixelType(Imath.PixelType.HALF))
-    channel_data[ch_name] = opacities[:, :, 0].astype(np.float16).tobytes()
+    channel_data[ch_name] = opacities[:, :, 0].astype(np.float32).tobytes()
 
     # SH channels
     for i in range(3):
         ch_name = f"sh_0_{i}"
         channels[ch_name] = Imath.Channel(Imath.PixelType(Imath.PixelType.HALF))
-        channel_data[ch_name] = sh[:, :, i].astype(np.float16).tobytes()
+        channel_data[ch_name] = sh[:, :, i].astype(np.float32).tobytes()
 
     header["channels"] = channels
 
