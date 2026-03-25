@@ -226,9 +226,9 @@ def main():
         # Render using the same call as render_interpolated_video
         with torch.no_grad():
             colors, depths, _ = model.gs_renderer.rasterizer.rasterize_batches(
-                combined_splats["means"][:1], combined_splats["quats"][:1], combined_splats["scales"][:1],
-                combined_splats["opacities"][:1], combined_splats["sh"][:1] if "sh" in combined_splats else combined_splats["colors"][:1],
-                viewmats, Ks, width=W, height=H, sh_degree=model.gs_renderer.sh_degree if "sh" in combined_splats else None
+                combined_splats["means"], combined_splats["quats"], combined_splats["scales"],
+                combined_splats["opacities"], combined_splats["sh"],
+                viewmats, Ks, width=W, height=H, sh_degree=0
             )
 
         # Save renders for each camera
