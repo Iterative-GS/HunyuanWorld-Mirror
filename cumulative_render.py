@@ -189,84 +189,99 @@ def main():
 
     print("🎨 Starting cumulative rendering...")
 
+    # Load ALL splats at once
+    print("📄 Loading all splat files...")
+    all_splats = []
+    for j in range(num_views):
+        zip_path = infer_dir / f"splats_view_{j}.zip"
+        if not zip_path.exists():
+            raise FileNotFoundError(f"Splat file not found: {zip_path}")
+
+        splats_j = load_splats_from_exr(zip_path)
+        all_splats.append(splats_j)
+        print(f"  📄 Loaded splats_view_{j}.zip: {splats_j['means'].shape[1]} splats")
+
+    # Concatenate all splats along the N dimension (dim=1)
+    combined_splats = {
+        "means": torch.cat([s["means"].to(device) for s in all_splats], dim=1),
+        "quats": torch.cat([s["quats"].to(device) for s in all_splats], dim=1),
+        "scales": torch.cat([s["scales"].to(device) for s in all_splats], dim=1),
+        "opacities": torch.cat([s["opacities"].to(device) for s in all_splats], dim=1),
+        "sh": torch.cat([s["sh"].to(device) for s in all_splats], dim=1),
+    }
+
+    # Load and apply global confidence mask once
+    mask_path = infer_dir / "global_mask.npy"
+    if mask_path.exists():
+        global_mask = np.load(mask_path)
+        global_mask = torch.from_numpy(global_mask).to(device)
+        print(f"  🎯 Loaded global mask: {global_mask.shape[0]} total, {global_mask.sum().item()} kept")
+
+        # Apply global mask to all splat attributes
+        combined_splats = {
+            "means": combined_splats["means"][:, global_mask],
+            "quats": combined_splats["quats"][:, global_mask],
+            "scales": combined_splats["scales"][:, global_mask],
+            "opacities": combined_splats["opacities"][:, global_mask],
+            "sh": combined_splats["sh"][:, global_mask],
+        }
+        print(f"  ✂️  Applied global filtering: {combined_splats['means'].shape[1]} splats remaining")
+    else:
+        print(f"  ⚠️  Global mask not found: {mask_path} - using unfiltered splats")
+
+    # Now create cumulative subsets from the filtered splats
     for i in range(num_views):
         print(f"\n🔄 Processing cumulative views 0-{i}")
 
-        # Load individual splats (views 0 to i) and concatenate
-        all_splats = []
-        for j in range(i + 1):
-            zip_path = infer_dir / f"splats_view_{j}.zip"
-            if not zip_path.exists():
-                raise FileNotFoundError(f"Splat file not found: {zip_path}")
+        # Calculate how many splats per view (assuming uniform)
+        splats_per_view = H * W
+        end_idx = (i + 1) * splats_per_view
 
-            splats_j = load_splats_from_exr(zip_path)
-            all_splats.append(splats_j)
-            print(f"  📄 Loaded splats_view_{j}.zip: {splats_j['means'].shape[1]} splats")
-
-        # Concatenate all splats along the N dimension (dim=1)
-        combined_splats = {
-            "means": torch.cat([s["means"].to(device) for s in all_splats], dim=1),
-            "quats": torch.cat([s["quats"].to(device) for s in all_splats], dim=1),
-            "scales": torch.cat([s["scales"].to(device) for s in all_splats], dim=1),
-            "opacities": torch.cat([s["opacities"].to(device) for s in all_splats], dim=1),
-            "sh": torch.cat([s["sh"].to(device) for s in all_splats], dim=1),
+        # Take subset for cumulative views 0 to i
+        cumulative_splats = {
+            "means": combined_splats["means"][:, :end_idx],
+            "quats": combined_splats["quats"][:, :end_idx],
+            "scales": combined_splats["scales"][:, :end_idx],
+            "opacities": combined_splats["opacities"][:, :end_idx],
+            "sh": combined_splats["sh"][:, :end_idx],
         }
 
-        # Load and apply global confidence mask to match model's filtering
-        mask_path = infer_dir / f"mask_cumulative_{i}.npy"
-        if mask_path.exists():
-            confidence_mask = np.load(mask_path)
-            confidence_mask = torch.from_numpy(confidence_mask).to(device)
-            print(f"  🎯 Loaded confidence mask: {confidence_mask.shape[0]} total, {confidence_mask.sum().item()} kept")
-
-            # Apply mask to all splat attributes
-            combined_splats = {
-                "means": combined_splats["means"][:, confidence_mask],
-                "quats": combined_splats["quats"][:, confidence_mask],
-                "scales": combined_splats["scales"][:, confidence_mask],
-                "opacities": combined_splats["opacities"][:, confidence_mask],
-                "sh": combined_splats["sh"][:, confidence_mask],
-            }
-            print(f"  ✂️  Applied confidence filtering: {combined_splats['means'].shape[1]} splats remaining")
-        else:
-            print(f"  ⚠️  Confidence mask not found: {mask_path} - using unfiltered splats")
-
         # Filter out splats with NaN in means to eliminate white fog
-        nan_mask = ~torch.isnan(combined_splats["means"]).any(dim=-1).any(dim=0)  # [N]
+        nan_mask = ~torch.isnan(cumulative_splats["means"]).any(dim=-1).any(dim=0)  # [N]
         num_nan = nan_mask.shape[0] - nan_mask.sum().item()
         if num_nan > 0:
-            combined_splats = {
-                "means": combined_splats["means"][:, nan_mask],
-                "quats": combined_splats["quats"][:, nan_mask],
-                "scales": combined_splats["scales"][:, nan_mask],
-                "opacities": combined_splats["opacities"][:, nan_mask],
-                "sh": combined_splats["sh"][:, nan_mask],
+            cumulative_splats = {
+                "means": cumulative_splats["means"][:, nan_mask],
+                "quats": cumulative_splats["quats"][:, nan_mask],
+                "scales": cumulative_splats["scales"][:, nan_mask],
+                "opacities": cumulative_splats["opacities"][:, nan_mask],
+                "sh": cumulative_splats["sh"][:, nan_mask],
             }
             print(f"  🧹 Filtered out {num_nan} NaN splats")
         else:
             print(f"  ✅ No NaN splats found")
 
-        total_splats = combined_splats["means"].shape[1]
+        total_splats = cumulative_splats["means"].shape[1]
         print(f"  🔗 Combined splats: {total_splats} total")
 
         # Debug: Save splat shapes and statistics to verify consistency
         debug_path = render_dir / f"debug_splats_view_{i}.txt"
         with open(debug_path, 'w') as f:
             f.write(f"View {i} splats:\n")
-            f.write(f"means shape: {combined_splats['means'].shape}\n")
-            f.write(f"means range: [{combined_splats['means'].min().item():.3f}, {combined_splats['means'].max().item():.3f}]\n")
-            f.write(f"means sample: {combined_splats['means'][0, :5, :3]}\n")
-            f.write(f"scales shape: {combined_splats['scales'].shape}\n")
-            f.write(f"scales range: [{combined_splats['scales'].min().item():.3f}, {combined_splats['scales'].max().item():.3f}]\n")
-            f.write(f"scales sample: {combined_splats['scales'][0, :5, :3]}\n")
-            f.write(f"opacities shape: {combined_splats['opacities'].shape}\n")
-            f.write(f"opacities range: [{combined_splats['opacities'].min().item():.3f}, {combined_splats['opacities'].max().item():.3f}]\n")
-            f.write(f"opacities sample: {combined_splats['opacities'][0, :5]}\n")
+            f.write(f"means shape: {cumulative_splats['means'].shape}\n")
+            f.write(f"means range: [{cumulative_splats['means'].min().item():.3f}, {cumulative_splats['means'].max().item():.3f}]\n")
+            f.write(f"means sample: {cumulative_splats['means'][0, :5, :3]}\n")
+            f.write(f"scales shape: {cumulative_splats['scales'].shape}\n")
+            f.write(f"scales range: [{cumulative_splats['scales'].min().item():.3f}, {cumulative_splats['scales'].max().item():.3f}]\n")
+            f.write(f"scales sample: {cumulative_splats['scales'][0, :5, :3]}\n")
+            f.write(f"opacities shape: {cumulative_splats['opacities'].shape}\n")
+            f.write(f"opacities range: [{cumulative_splats['opacities'].min().item():.3f}, {cumulative_splats['opacities'].max().item():.3f}]\n")
+            f.write(f"opacities sample: {cumulative_splats['opacities'][0, :5]}\n")
             # Count splats with extreme values
-            scale_max = combined_splats['scales'].max(dim=-1)[0]  # [1, N]
+            scale_max = cumulative_splats['scales'].max(dim=-1)[0]  # [1, N]
             large_scales = (scale_max > 10).sum().item()
             f.write(f"large scales (>10): {large_scales}\n")
-            nan_means = torch.isnan(combined_splats['means']).any(dim=-1).any(dim=0).sum().item()
+            nan_means = torch.isnan(cumulative_splats['means']).any(dim=-1).any(dim=0).sum().item()
             f.write(f"NaN means: {nan_means}\n")
         print(f"  🐛 Saved debug info to {debug_path}")
 
@@ -277,8 +292,8 @@ def main():
         # Render using the same call as render_interpolated_video
         with torch.no_grad():
             colors, depths, _ = model.gs_renderer.rasterizer.rasterize_batches(
-                combined_splats["means"], combined_splats["quats"], combined_splats["scales"],
-                combined_splats["opacities"], combined_splats["sh"],
+                cumulative_splats["means"], cumulative_splats["quats"], cumulative_splats["scales"],
+                cumulative_splats["opacities"], cumulative_splats["sh"],
                 viewmats, Ks, width=W, height=H, sh_degree=0
             )
 

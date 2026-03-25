@@ -393,24 +393,19 @@ def main():
                 save_splat_artifacts(zip_path, splats_i, H, W)
                 print(f"  - Saved view {i} splats to {zip_path}")
 
-            # Compute and save masks for cumulative sets
-            for cumulative_views in range(S):
-                # Get confidence for views 0 to cumulative_views
-                end_idx = (cumulative_views + 1) * splats_per_view
-                conf_cum = all_conf[:end_idx]
+            # Compute and save single global mask for all splats
+            # Apply global confidence filtering across all views
+            threshold = torch.quantile(all_conf, min(1, 0.3))  # 1st percentile (top 99%)
+            global_mask = all_conf >= threshold
 
-                # Apply global confidence filtering to the cumulative set
-                threshold = torch.quantile(conf_cum, min(1, 0.3))  # 1st percentile (top 99%)
-                valid_mask = conf_cum >= threshold
+            filtered_count = global_mask.sum().item()
+            total_possible = len(all_conf)
+            print(f"  - Global mask: {filtered_count}/{total_possible} splats would be kept")
 
-                filtered_count = valid_mask.sum().item()
-                total_possible = end_idx
-                print(f"  - Cumulative views 0-{cumulative_views}: {filtered_count}/{total_possible} splats would be kept")
-
-                # Save mask as numpy array
-                mask_path = outdir / f"mask_cumulative_{cumulative_views}.npy"
-                np.save(mask_path, valid_mask.cpu().numpy())
-                print(f"  - Saved mask 0-{cumulative_views} to {mask_path}")
+            # Save global mask as numpy array
+            mask_path = outdir / "global_mask.npy"
+            np.save(mask_path, global_mask.cpu().numpy())
+            print(f"  - Saved global mask to {mask_path}")
 
             # Save the exact splats used by render_interpolated_video as flat EXR
             # splats dict is already in [1, N, ...] format for flat EXR
