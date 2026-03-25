@@ -231,17 +231,43 @@ def main():
         else:
             print(f"  ⚠️  Confidence mask not found: {mask_path} - using unfiltered splats")
 
+        # Filter out splats with NaN in means to eliminate white fog
+        nan_mask = ~torch.isnan(combined_splats["means"]).any(dim=-1).any(dim=0)  # [N]
+        num_nan = nan_mask.shape[0] - nan_mask.sum().item()
+        if num_nan > 0:
+            combined_splats = {
+                "means": combined_splats["means"][:, nan_mask],
+                "quats": combined_splats["quats"][:, nan_mask],
+                "scales": combined_splats["scales"][:, nan_mask],
+                "opacities": combined_splats["opacities"][:, nan_mask],
+                "sh": combined_splats["sh"][:, nan_mask],
+            }
+            print(f"  🧹 Filtered out {num_nan} NaN splats")
+        else:
+            print(f"  ✅ No NaN splats found")
+
         total_splats = combined_splats["means"].shape[1]
         print(f"  🔗 Combined splats: {total_splats} total")
 
-        # Debug: Save splat shapes and sample values to verify consistency
+        # Debug: Save splat shapes and statistics to verify consistency
         debug_path = render_dir / f"debug_splats_view_{i}.txt"
         with open(debug_path, 'w') as f:
             f.write(f"View {i} splats:\n")
             f.write(f"means shape: {combined_splats['means'].shape}\n")
+            f.write(f"means range: [{combined_splats['means'].min().item():.3f}, {combined_splats['means'].max().item():.3f}]\n")
             f.write(f"means sample: {combined_splats['means'][0, :5, :3]}\n")
+            f.write(f"scales shape: {combined_splats['scales'].shape}\n")
+            f.write(f"scales range: [{combined_splats['scales'].min().item():.3f}, {combined_splats['scales'].max().item():.3f}]\n")
+            f.write(f"scales sample: {combined_splats['scales'][0, :5, :3]}\n")
             f.write(f"opacities shape: {combined_splats['opacities'].shape}\n")
+            f.write(f"opacities range: [{combined_splats['opacities'].min().item():.3f}, {combined_splats['opacities'].max().item():.3f}]\n")
             f.write(f"opacities sample: {combined_splats['opacities'][0, :5]}\n")
+            # Count splats with extreme values
+            scale_max = combined_splats['scales'].max(dim=-1)[0]  # [1, N]
+            large_scales = (scale_max > 10).sum().item()
+            f.write(f"large scales (>10): {large_scales}\n")
+            nan_means = torch.isnan(combined_splats['means']).any(dim=-1).any(dim=0).sum().item()
+            f.write(f"NaN means: {nan_means}\n")
         print(f"  🐛 Saved debug info to {debug_path}")
 
         # Prepare cameras for views 0 to i
