@@ -223,16 +223,6 @@ def main():
         viewmats = torch.stack(extrinsics[:i+1]).unsqueeze(0).to(device)  # [1, i+1, 4, 4]
         Ks = torch.stack(intrinsics[:i+1]).unsqueeze(0).to(device)        # [1, i+1, 3, 3]
 
-        # Normalize coordinates to match render_interpolated_video (same as effects code)
-        shift = combined_splats["means"][0].median(dim=0).values
-        scale_factor = (combined_splats["means"][0] - shift).abs().quantile(0.95, dim=0).max()
-
-        # Normalize splat positions
-        combined_splats["means"][0] = (combined_splats["means"][0] - shift) / scale_factor
-
-        # Normalize camera positions to match normalized splats
-        viewmats[0, :, :3, -1] = (viewmats[0, :, :3, -1] - shift) / scale_factor
-
         # Render using the same call as render_interpolated_video
         with torch.no_grad():
             colors, depths, _ = model.gs_renderer.rasterizer.rasterize_batches(
