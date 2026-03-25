@@ -152,7 +152,7 @@ def process_scene(input_path, output_path, model, args):
     # 3) Load and preprocess images
     views = {}
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    imgs = prepare_images_to_tensor(img_paths, target_size=args.target_size, resize_strategy="crop").to(device)  # [1,S,3,H,W], in [0,1]
+    imgs = prepare_images_to_tensor(img_paths, target_size=args.target_size, resize_strategy="pad").to(device)  # [1,S,3,H,W], in [0,1]
     views["img"] = imgs
     B, S, C, H, W = imgs.shape
     cond_flags = [0, 0, 0]

@@ -179,7 +179,7 @@ def _apply_padding(tensor_img, target_dim):
         pad_left, pad_right = w_pad // 2, w_pad - w_pad // 2
         return torch.nn.functional.pad(
             tensor_img, (pad_left, pad_right, pad_top, pad_bottom), 
-            mode="constant", value=1.0
+            mode="constant", value=0.0
         )
     return tensor_img
 
