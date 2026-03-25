@@ -583,7 +583,8 @@ def main():
 
             print(f"\n🔄 Processing scene: {resolution}/{scene_hash}")
             total_scenes += 1
-
+            if total_scenes > 99:
+                break
             try:
                 process_scene(str(scene_dir), str(output_path), model, args)
                 processed_scenes += 1
