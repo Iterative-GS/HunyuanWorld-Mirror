@@ -38,7 +38,7 @@ def create_filter_mask(
     edge_normal_threshold: float = 5.0,
     edge_depth_threshold: float = 0.03,
     apply_confidence_mask: bool = True,
-    apply_edge_mask: bool = True,
+    apply_edge_mask: bool = False,
     apply_sky_mask: bool = False,
 ) -> np.ndarray:
     """

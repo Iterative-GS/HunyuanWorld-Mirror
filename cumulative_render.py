@@ -184,7 +184,7 @@ def main():
     # Load model for rendering
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = WorldMirror.from_pretrained("tencent/HunyuanWorld-Mirror").to(device)
-    model.gs_renderer.enable_prune = True
+    model.gs_renderer.enable_prune = False
 
 
     print("🎨 Starting cumulative rendering...")
