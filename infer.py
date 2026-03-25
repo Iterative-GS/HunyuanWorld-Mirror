@@ -400,7 +400,7 @@ def main():
                 conf_cum = all_conf[:end_idx]
 
                 # Apply global confidence filtering to the cumulative set
-                threshold = torch.quantile(conf_cum, 0.01 * cumulative_views**2)  # 1st percentile (top 99%)
+                threshold = torch.quantile(conf_cum, min(1, 0.001 * cumulative_views**2))  # 1st percentile (top 99%)
                 valid_mask = conf_cum >= threshold
 
                 filtered_count = valid_mask.sum().item()
