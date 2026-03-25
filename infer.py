@@ -370,16 +370,21 @@ def main():
             # Get confidence scores for all views
             all_conf = predictions["gs_depth_conf"][0].flatten()  # [S*H*W]
 
-            # Save individual view splats as EXR zips (from combined splats, pixel-aligned)
+            # Save individual view splats as EXR zips (from combined splats, flat format)
+            total_splats = filtered_splats["means"].shape[1]
+            splats_per_view = total_splats // S
             for i in range(S):
                 start = i * splats_per_view
-                end = (i + 1) * splats_per_view
+                if i == S - 1:
+                    end = total_splats
+                else:
+                    end = (i + 1) * splats_per_view
 
-                means_i = filtered_splats["means"][0, start:end].reshape(H, W, 3)
-                scales_i = filtered_splats["scales"][0, start:end].reshape(H, W, 3)
-                quats_i = filtered_splats["quats"][0, start:end].reshape(H, W, 4)
-                opacities_i = filtered_splats["opacities"][0, start:end].reshape(H, W, 1)
-                sh_i = filtered_splats["sh"][0, start:end].reshape(H, W, 3)
+                means_i = filtered_splats["means"][0, start:end].unsqueeze(0)
+                scales_i = filtered_splats["scales"][0, start:end].unsqueeze(0)
+                quats_i = filtered_splats["quats"][0, start:end].unsqueeze(0)
+                opacities_i = filtered_splats["opacities"][0, start:end].unsqueeze(0)
+                sh_i = filtered_splats["sh"][0, start:end].unsqueeze(0)
 
                 splats_i = {
                     "means": means_i,
@@ -390,7 +395,7 @@ def main():
                 }
 
                 zip_path = outdir / f"splats_view_{i}.zip"
-                save_splat_artifacts(zip_path, splats_i, H, W)
+                save_splat_artifacts(zip_path, splats_i, 1, means_i.shape[1])
                 print(f"  - Saved view {i} splats to {zip_path}")
 
             # Compute and save masks for cumulative sets
