@@ -368,7 +368,7 @@ def main():
             unfiltered_sh = predictions["splats_unfiltered"]["sh"][0]  # [N, 1, 3]
 
             # Get confidence scores for all views
-            all_conf = predictions["depth_conf"][0].flatten()  # [S*H*W]
+            all_conf = predictions["gs_depth_conf"][0].flatten()  # [S*H*W]
 
             # Save individual view splats as EXR zips (pixel-aligned from unfiltered)
             for i in range(S):
