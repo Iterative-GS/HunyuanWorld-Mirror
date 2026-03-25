@@ -85,29 +85,29 @@ def load_splats_from_exr(exr_zip_path):
             height = dw.max.y - dw.min.y + 1
 
             # Read channels
-            means_0 = np.frombuffer(exr.channel('means_0'), dtype=np.float32).reshape(height, width)
-            means_1 = np.frombuffer(exr.channel('means_1'), dtype=np.float32).reshape(height, width)
-            means_2 = np.frombuffer(exr.channel('means_2'), dtype=np.float32).reshape(height, width)
-            means = np.stack([means_0, means_1, means_2], axis=-1)  # H x W x 3
+            means_0 = np.frombuffer(exr.channel('means_0'), dtype=np.float16).reshape(height, width)
+            means_1 = np.frombuffer(exr.channel('means_1'), dtype=np.float16).reshape(height, width)
+            means_2 = np.frombuffer(exr.channel('means_2'), dtype=np.float16).reshape(height, width)
+            means = np.stack([means_0, means_1, means_2], axis=-1).astype(np.float32)  # H x W x 3
 
-            quats_0 = np.frombuffer(exr.channel('quats_0'), dtype=np.float32).reshape(height, width)
-            quats_1 = np.frombuffer(exr.channel('quats_1'), dtype=np.float32).reshape(height, width)
-            quats_2 = np.frombuffer(exr.channel('quats_2'), dtype=np.float32).reshape(height, width)
-            quats_3 = np.frombuffer(exr.channel('quats_3'), dtype=np.float32).reshape(height, width)
-            quats = np.stack([quats_0, quats_1, quats_2, quats_3], axis=-1)  # H x W x 4
+            quats_0 = np.frombuffer(exr.channel('quats_0'), dtype=np.float16).reshape(height, width)
+            quats_1 = np.frombuffer(exr.channel('quats_1'), dtype=np.float16).reshape(height, width)
+            quats_2 = np.frombuffer(exr.channel('quats_2'), dtype=np.float16).reshape(height, width)
+            quats_3 = np.frombuffer(exr.channel('quats_3'), dtype=np.float16).reshape(height, width)
+            quats = np.stack([quats_0, quats_1, quats_2, quats_3], axis=-1).astype(np.float32)  # H x W x 4
 
-            scales_0 = np.frombuffer(exr.channel('scales_0'), dtype=np.float32).reshape(height, width)
-            scales_1 = np.frombuffer(exr.channel('scales_1'), dtype=np.float32).reshape(height, width)
-            scales_2 = np.frombuffer(exr.channel('scales_2'), dtype=np.float32).reshape(height, width)
-            scales = np.stack([scales_0, scales_1, scales_2], axis=-1)  # H x W x 3
+            scales_0 = np.frombuffer(exr.channel('scales_0'), dtype=np.float16).reshape(height, width)
+            scales_1 = np.frombuffer(exr.channel('scales_1'), dtype=np.float16).reshape(height, width)
+            scales_2 = np.frombuffer(exr.channel('scales_2'), dtype=np.float16).reshape(height, width)
+            scales = np.stack([scales_0, scales_1, scales_2], axis=-1).astype(np.float32)  # H x W x 3
 
-            opacities_0 = np.frombuffer(exr.channel('opacities_0'), dtype=np.float32).reshape(height, width)
-            opacities = opacities_0  # H x W
+            opacities_0 = np.frombuffer(exr.channel('opacities_0'), dtype=np.float16).reshape(height, width)
+            opacities = opacities_0.astype(np.float32)  # H x W
 
-            sh_0_0 = np.frombuffer(exr.channel('sh_0_0'), dtype=np.float32).reshape(height, width)
-            sh_0_1 = np.frombuffer(exr.channel('sh_0_1'), dtype=np.float32).reshape(height, width)
-            sh_0_2 = np.frombuffer(exr.channel('sh_0_2'), dtype=np.float32).reshape(height, width)
-            sh = np.stack([sh_0_0, sh_0_1, sh_0_2], axis=-1)  # H x W x 3
+            sh_0_0 = np.frombuffer(exr.channel('sh_0_0'), dtype=np.float16).reshape(height, width)
+            sh_0_1 = np.frombuffer(exr.channel('sh_0_1'), dtype=np.float16).reshape(height, width)
+            sh_0_2 = np.frombuffer(exr.channel('sh_0_2'), dtype=np.float16).reshape(height, width)
+            sh = np.stack([sh_0_0, sh_0_1, sh_0_2], axis=-1).astype(np.float32)  # H x W x 3
 
             # Flatten to N x ...
             N = height * width
