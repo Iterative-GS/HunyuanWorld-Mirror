@@ -192,43 +192,44 @@ def main():
     for i in range(num_views):
         print(f"\n🔄 Processing cumulative views 0-{i}")
 
-        # Load and prune individual splats (views 0 to i) to match model's filtering
-        pruned_splats = []
+        # Load individual splats (views 0 to i) and concatenate
+        all_splats = []
         for j in range(i + 1):
             zip_path = infer_dir / f"splats_view_{j}.zip"
             if not zip_path.exists():
                 raise FileNotFoundError(f"Splat file not found: {zip_path}")
 
             splats_j = load_splats_from_exr(zip_path)
+            all_splats.append(splats_j)
             print(f"  📄 Loaded splats_view_{j}.zip: {splats_j['means'].shape[1]} splats")
 
-            # Apply per-view pruning to match model's prune_gs logic
-            scales = splats_j["scales"][0]  # [H*W, 3]
-            scale_max = scales.max(dim=-1)[0]  # [H*W]
-            scale_max_np = scale_max.detach().cpu().float().numpy()
-            scale_threshold = float(np.quantile(scale_max_np, 0.95))
-            filter_mask = scale_max <= scale_threshold
-
-            # Filter all splat attributes
-            pruned_splats_j = {
-                "means": splats_j["means"][0][filter_mask].unsqueeze(0),      # [1, N_j, 3]
-                "quats": splats_j["quats"][0][filter_mask].unsqueeze(0),      # [1, N_j, 4]
-                "scales": splats_j["scales"][0][filter_mask].unsqueeze(0),    # [1, N_j, 3]
-                "opacities": splats_j["opacities"][0][filter_mask].unsqueeze(0), # [1, N_j, 1]
-                "sh": splats_j["sh"][0][filter_mask].unsqueeze(0),            # [1, N_j, 1, 3]
-            }
-
-            pruned_splats.append(pruned_splats_j)
-            print(f"  ✂️  Pruned to {pruned_splats_j['means'].shape[1]} splats (filtered {filter_mask.sum().item()}/{len(filter_mask)} kept)")
-
-        # Concatenate pruned splats along the N dimension (dim=1)
+        # Concatenate all splats along the N dimension (dim=1)
         combined_splats = {
-            "means": torch.cat([s["means"].to(device) for s in pruned_splats], dim=1),
-            "quats": torch.cat([s["quats"].to(device) for s in pruned_splats], dim=1),
-            "scales": torch.cat([s["scales"].to(device) for s in pruned_splats], dim=1),
-            "opacities": torch.cat([s["opacities"].to(device) for s in pruned_splats], dim=1),
-            "sh": torch.cat([s["sh"].to(device) for s in pruned_splats], dim=1),
+            "means": torch.cat([s["means"].to(device) for s in all_splats], dim=1),
+            "quats": torch.cat([s["quats"].to(device) for s in all_splats], dim=1),
+            "scales": torch.cat([s["scales"].to(device) for s in all_splats], dim=1),
+            "opacities": torch.cat([s["opacities"].to(device) for s in all_splats], dim=1),
+            "sh": torch.cat([s["sh"].to(device) for s in all_splats], dim=1),
         }
+
+        # Load and apply global confidence mask to match model's filtering
+        mask_path = infer_dir / f"mask_cumulative_{i}.npy"
+        if mask_path.exists():
+            confidence_mask = np.load(mask_path)
+            confidence_mask = torch.from_numpy(confidence_mask).to(device)
+            print(f"  🎯 Loaded confidence mask: {confidence_mask.shape[0]} total, {confidence_mask.sum().item()} kept")
+
+            # Apply mask to all splat attributes
+            combined_splats = {
+                "means": combined_splats["means"][:, confidence_mask],
+                "quats": combined_splats["quats"][:, confidence_mask],
+                "scales": combined_splats["scales"][:, confidence_mask],
+                "opacities": combined_splats["opacities"][:, confidence_mask],
+                "sh": combined_splats["sh"][:, confidence_mask],
+            }
+            print(f"  ✂️  Applied confidence filtering: {combined_splats['means'].shape[1]} splats remaining")
+        else:
+            print(f"  ⚠️  Confidence mask not found: {mask_path} - using unfiltered splats")
 
         total_splats = combined_splats["means"].shape[1]
         print(f"  🔗 Combined splats: {total_splats} total")
