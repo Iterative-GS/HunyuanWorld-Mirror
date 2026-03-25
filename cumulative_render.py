@@ -192,24 +192,42 @@ def main():
     for i in range(num_views):
         print(f"\n🔄 Processing cumulative views 0-{i}")
 
-        # Load concatenated splats (views 0 to i) from pixel-aligned individual splats
-        all_splats = []
+        # Load and prune individual splats (views 0 to i) to match model's filtering
+        pruned_splats = []
         for j in range(i + 1):
             zip_path = infer_dir / f"splats_view_{j}.zip"
             if not zip_path.exists():
                 raise FileNotFoundError(f"Splat file not found: {zip_path}")
 
             splats_j = load_splats_from_exr(zip_path)
-            all_splats.append(splats_j)
             print(f"  📄 Loaded splats_view_{j}.zip: {splats_j['means'].shape[1]} splats")
 
-        # Concatenate splats along the N dimension (dim=1)
+            # Apply per-view pruning to match model's prune_gs logic
+            scales = splats_j["scales"][0]  # [H*W, 3]
+            scale_max = scales.max(dim=-1)[0]  # [H*W]
+            scale_max_np = scale_max.detach().cpu().float().numpy()
+            scale_threshold = float(np.quantile(scale_max_np, 0.95))
+            filter_mask = scale_max <= scale_threshold
+
+            # Filter all splat attributes
+            pruned_splats_j = {
+                "means": splats_j["means"][0][filter_mask].unsqueeze(0),      # [1, N_j, 3]
+                "quats": splats_j["quats"][0][filter_mask].unsqueeze(0),      # [1, N_j, 4]
+                "scales": splats_j["scales"][0][filter_mask].unsqueeze(0),    # [1, N_j, 3]
+                "opacities": splats_j["opacities"][0][filter_mask].unsqueeze(0), # [1, N_j, 1]
+                "sh": splats_j["sh"][0][filter_mask].unsqueeze(0),            # [1, N_j, 1, 3]
+            }
+
+            pruned_splats.append(pruned_splats_j)
+            print(f"  ✂️  Pruned to {pruned_splats_j['means'].shape[1]} splats (filtered {filter_mask.sum().item()}/{len(filter_mask)} kept)")
+
+        # Concatenate pruned splats along the N dimension (dim=1)
         combined_splats = {
-            "means": torch.cat([s["means"].to(device) for s in all_splats], dim=1),
-            "quats": torch.cat([s["quats"].to(device) for s in all_splats], dim=1),
-            "scales": torch.cat([s["scales"].to(device) for s in all_splats], dim=1),
-            "opacities": torch.cat([s["opacities"].to(device) for s in all_splats], dim=1),
-            "sh": torch.cat([s["sh"].to(device) for s in all_splats], dim=1),
+            "means": torch.cat([s["means"].to(device) for s in pruned_splats], dim=1),
+            "quats": torch.cat([s["quats"].to(device) for s in pruned_splats], dim=1),
+            "scales": torch.cat([s["scales"].to(device) for s in pruned_splats], dim=1),
+            "opacities": torch.cat([s["opacities"].to(device) for s in pruned_splats], dim=1),
+            "sh": torch.cat([s["sh"].to(device) for s in pruned_splats], dim=1),
         }
 
         total_splats = combined_splats["means"].shape[1]
