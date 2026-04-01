@@ -65,16 +65,6 @@ def load_splats_from_ply(ply_path):
 
 
 def load_splats_from_exr(exr_zip_path):
-    """
-    Load Gaussian splats from EXR zip file and convert to tensor format expected by rasterizer.
-    Filters out invalid splats (marked with opacity = -1).
-
-    Args:
-        exr_zip_path: Path to EXR zip file
-
-    Returns:
-        Dictionary with splat tensors in format expected by rasterize_batches
-    """
     with zipfile.ZipFile(exr_zip_path, 'r') as z:
         exr_filename = z.namelist()[0]
         with z.open(exr_filename) as f:
