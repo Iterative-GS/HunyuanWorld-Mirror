@@ -194,14 +194,19 @@ class GaussianSplatRenderer(nn.Module):
         
         # 3) Generate splats from gs_params + predictions, and perform voxel merging
         if self.training:
-            splats = self.prepare_splats(views, predictions, images, gs_params, S, position_from="gsdepth+gtcamera")
+            splats = self.prepare_splats(views, predictions, images, gs_params, S, position_from="gsdepth+gtcamera", return_raw=True)
         elif not is_inference:
-            splats = self.prepare_splats(views, predictions, images, gs_params, S, context_predictions, position_from="gsdepth+predcamera")
+            splats = self.prepare_splats(views, predictions, images, gs_params, S, context_predictions, position_from="gsdepth+predcamera", return_raw=True)
         else:
-            splats = self.prepare_splats(views, predictions, images, gs_params, S, position_from="gsdepth+predcamera")
+            splats = self.prepare_splats(views, predictions, images, gs_params, S, position_from="gsdepth+predcamera", return_raw=True)
 
         predictions["splats_unfiltered"] = splats
-
+        if self.training:
+            splats = self.prepare_splats(views, predictions, images, gs_params, S, position_from="gsdepth+gtcamera", return_raw=False)
+        elif not is_inference:
+            splats = self.prepare_splats(views, predictions, images, gs_params, S, context_predictions, position_from="gsdepth+predcamera", return_raw=False)
+        else:
+            splats = self.prepare_splats(views, predictions, images, gs_params, S, position_from="gsdepth+predcamera", return_raw=False)
         # Apply confidence filtering before pruning
         splat_counts = None
         if self.enable_conf_filter and "gs_depth_conf" in predictions:
@@ -403,7 +408,7 @@ class GaussianSplatRenderer(nn.Module):
         return output
 
     def prepare_splats(self, views, predictions, images, gs_params, context_nums, 
-                       context_predictions={}, position_from="gsdepth+gtcamera"):
+                       context_predictions={}, position_from="gsdepth+gtcamera", return_raw = False):
         """
         Prepare Gaussian splats from model predictions and input data.
         
@@ -433,9 +438,14 @@ class GaussianSplatRenderer(nn.Module):
         )
 
         # Apply activation functions to Gaussian parameters
-        splats["quats"] = act_gs.reg_dense_rotation(quats.reshape(B, S * H * W, 4))
-        splats["scales"] = act_gs.reg_dense_scales(scales.reshape(B, S * H * W, 3)).clamp_max(0.3)
-        splats["opacities"] = act_gs.reg_dense_opacities(opacities.reshape(B, S * H * W))
+        if return_raw:
+            splats["quats"] = quats.reshape(B, S * H * W, 4)
+            splats["scales"] = scales.reshape(B, S * H * W, 3)
+            splats["opacities"] = opacities.reshape(B, S * H * W)
+        else:
+            splats["quats"] = act_gs.reg_dense_rotation(quats.reshape(B, S * H * W, 4))
+            splats["scales"] = act_gs.reg_dense_scales(scales.reshape(B, S * H * W, 3)).clamp_max(0.3)
+            splats["opacities"] = act_gs.reg_dense_opacities(opacities.reshape(B, S * H * W))
         residual_sh = act_gs.reg_dense_sh(residual_sh.reshape(B, S * H * W, self.nums_sh * 3))
 
         # Handle spherical harmonics (SH) coefficients
@@ -445,8 +455,10 @@ class GaussianSplatRenderer(nn.Module):
         )
         splats['sh'] = new_sh + residual_sh
         splats['residual_sh'] = residual_sh
-
-        splats["weights"] = act_gs.reg_dense_weights(weights.reshape(B, S * H * W))
+        if return_raw:
+            splats["weights"] = weights.reshape(B, S * H * W)
+        else:
+            splats["weights"] = act_gs.reg_dense_weights(weights.reshape(B, S * H * W))
 
         # Compute 3D positions based on specified method
         if position_from == "pts3d":
