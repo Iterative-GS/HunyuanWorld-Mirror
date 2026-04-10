@@ -18,6 +18,7 @@ from pathlib import Path
 
 import numpy as np
 from src.models.models.rasterization import GaussianSplatRenderer
+from src.models.utils.act_gs import *
 import torch
 from PIL import Image
 from plyfile import PlyData
@@ -107,16 +108,6 @@ def load_splats_from_exr(exr_zip_path):
             opacities_flat = opacities.reshape(N)
             sh_flat = sh.reshape(N, 3)
 
-            # Filter out invalid splats (marked with opacity = -1)
-            valid_mask = opacities_flat != -1.0
-            num_valid = valid_mask.sum()
-            print(f"  Loaded {num_valid}/{N} valid splats (filtered out {N - num_valid} invalid)")
-
-            means_flat = means_flat[valid_mask]
-            quats_flat = quats_flat[valid_mask]
-            scales_flat = scales_flat[valid_mask]
-            opacities_flat = opacities_flat[valid_mask]
-            sh_flat = sh_flat[valid_mask]
 
             # Convert to torch
             if height == 1:
@@ -194,9 +185,9 @@ def main():
     # Concatenate all splats along the N dimension (dim=1)
     combined_splats = {
         "means": torch.cat([s["means"].to(device) for s in all_splats], dim=1),
-        "quats": torch.cat([s["quats"].to(device) for s in all_splats], dim=1),
-        "scales": torch.cat([s["scales"].to(device) for s in all_splats], dim=1),
-        "opacities": torch.cat([s["opacities"].to(device) for s in all_splats], dim=1),
+        "quats": reg_dense_rotation(torch.stack([s["quats"].to(device) for s in all_splats], dim=1)),
+        "scales": reg_dense_scales(torch.stack([s["scales"].to(device) for s in all_splats], dim=1)),
+        "opacities": reg_dense_opacities(torch.stack([s["opacities"].to(device) for s in all_splats], dim=1)),
         "sh": torch.cat([s["sh"].to(device) for s in all_splats], dim=1),
     }
 
