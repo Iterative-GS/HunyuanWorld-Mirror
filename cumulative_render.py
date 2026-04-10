@@ -185,9 +185,9 @@ def main():
     # Concatenate all splats along the N dimension (dim=1)
     combined_splats = {
         "means": torch.cat([s["means"].to(device) for s in all_splats], dim=1),
-        "quats": reg_dense_rotation(torch.stack([s["quats"].to(device) for s in all_splats], dim=1)),
-        "scales": reg_dense_scales(torch.stack([s["scales"].to(device) for s in all_splats], dim=1)),
-        "opacities": reg_dense_opacities(torch.stack([s["opacities"].to(device) for s in all_splats], dim=1)),
+        "quats": reg_dense_rotation(torch.cat([s["quats"].to(device) for s in all_splats], dim=1)),
+        "scales": reg_dense_scales(torch.cat([s["scales"].to(device) for s in all_splats], dim=1)),
+        "opacities": reg_dense_opacities(torch.cat([s["opacities"].to(device) for s in all_splats], dim=1)),
         "sh": torch.cat([s["sh"].to(device) for s in all_splats], dim=1),
     }
 
