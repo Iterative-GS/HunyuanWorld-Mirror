@@ -191,24 +191,24 @@ def main():
         "sh": torch.cat([s["sh"].to(device) for s in all_splats], dim=1),
     }
 
-    # Load and apply global confidence mask once
-    mask_path = infer_dir / "global_mask.npy"
-    if mask_path.exists():
-        global_mask = np.load(mask_path)
-        global_mask = torch.from_numpy(global_mask).to(device)
-        print(f"  🎯 Loaded global mask: {global_mask.shape[0]} total, {global_mask.sum().item()} kept")
+    # # Load and apply global confidence mask once
+    # mask_path = infer_dir / "global_mask.npy"
+    # if mask_path.exists():
+    #     global_mask = np.load(mask_path)
+    #     global_mask = torch.from_numpy(global_mask).to(device)
+    #     print(f"  🎯 Loaded global mask: {global_mask.shape[0]} total, {global_mask.sum().item()} kept")
 
-        # Apply global mask to all splat attributes
-        combined_splats = {
-            "means": combined_splats["means"][:, global_mask],
-            "quats": combined_splats["quats"][:, global_mask],
-            "scales": combined_splats["scales"][:, global_mask],
-            "opacities": combined_splats["opacities"][:, global_mask],
-            "sh": combined_splats["sh"][:, global_mask],
-        }
-        print(f"  ✂️  Applied global filtering: {combined_splats['means'].shape[1]} splats remaining")
-    else:
-        print(f"  ⚠️  Global mask not found: {mask_path} - using unfiltered splats")
+    #     # Apply global mask to all splat attributes
+    #     combined_splats = {
+    #         "means": combined_splats["means"][:, global_mask],
+    #         "quats": combined_splats["quats"][:, global_mask],
+    #         "scales": combined_splats["scales"][:, global_mask],
+    #         "opacities": combined_splats["opacities"][:, global_mask],
+    #         "sh": combined_splats["sh"][:, global_mask],
+    #     }
+    #     print(f"  ✂️  Applied global filtering: {combined_splats['means'].shape[1]} splats remaining")
+    # else:
+    #     print(f"  ⚠️  Global mask not found: {mask_path} - using unfiltered splats")
 
     # Now create cumulative subsets from the filtered splats
     for i in range(num_views):
