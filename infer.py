@@ -18,7 +18,6 @@ from src.models.utils.geometry import create_pixel_coordinate_grid
 
 from src.utils.save_utils import save_depth_png, save_depth_npy, save_normal_png
 from src.utils.save_utils import save_scene_ply, save_gs_ply, save_points_ply, save_splat_artifacts
-from src.utils.render_utils import render_interpolated_video
 
 from src.utils.build_pycolmap_recon import build_pycolmap_reconstruction
 from src.models.utils.camera_utils import vector_to_camera_matrices
@@ -203,11 +202,9 @@ def process_scene(input_path, output_path, model, args):
         # Create dummy sky mask (all True = keep all points)
         sky_mask = np.ones((S, H, W), dtype=bool)
 
-    # 5) Save results
+    # 5) Save results (RGB: model input tensors only, under images_resized/)
     print("\n📤 Saving results...")
-    images_dir = output_path / "images" # original resolution images
-    images_dir.mkdir(exist_ok=True)
-    images_resized_dir = output_path / "images_resized" # resized images
+    images_resized_dir = output_path / "images_resized"
     images_resized_dir.mkdir(exist_ok=True)
     if args.save_depth:
         depth_dir = output_path / "depth"
@@ -219,7 +216,7 @@ def process_scene(input_path, output_path, model, args):
         sparse_dir = output_path / "sparse" / "0"
         sparse_dir.mkdir(parents=True, exist_ok=True)
 
-    # save images
+    # Save model-input RGB (same pixels as views["img"]) + COLMAP aspect geometry from originals
     processed_image_names = []
     for i in range(S):
         im = (imgs[0, i].permute(1, 2, 0).clamp(0, 1) * 255).to(torch.uint8).cpu().numpy()
@@ -231,8 +228,6 @@ def process_scene(input_path, output_path, model, args):
         orig_width, orig_height = pil_img.size
         new_height = int(orig_width / processed_aspect_ratio)
         new_width = orig_width
-        pil_img = pil_img.resize((orig_width, new_height), Image.Resampling.BICUBIC)
-        pil_img.save(str(images_dir / fname))
 
         processed_image_names.append(fname)
 
@@ -358,7 +353,7 @@ def process_scene(input_path, output_path, model, args):
             np.save(mask_path, global_mask.cpu().numpy())
             print(f"  - Saved global mask to {mask_path}")
 
-            # Save the exact splats used by render_interpolated_video as flat EXR
+            # Save filtered splats as flat EXR
             # splats dict is already in [1, N, ...] format for flat EXR
             flat_splats = filtered_splats
 
@@ -370,17 +365,6 @@ def process_scene(input_path, output_path, model, args):
             flat_zip_path = output_path / "splats_filtered_all.zip"
             save_splat_artifacts(flat_zip_path, flat_splats, 1, total_splats)
             print(f"  - Saved splats to {flat_zip_path}")
-
-        # Render video using the same filtered splats from predictions
-        num_views = S
-        if args.save_rendered:
-            model.gs_renderer.enable_prune = False
-            e4x4 = predictions['camera_poses']
-            k3x3 = predictions['camera_intrs']
-            render_interpolated_video(model.gs_renderer, predictions["splats"], e4x4, k3x3, (H, W), output_path / "rendered", interp_per_pair=15, loop_reverse=num_views==1)
-            print(f"  - Saved rendered.mp4 to {output_path}")
-        else:
-            print(f"⚠️  Not set --save_rendered flag, skipping video rendering")
 
     # Build and export COLMAP reconstruction (images + sparse)
     if args.save_colmap:
@@ -511,7 +495,6 @@ def main():
     parser.add_argument("--save_depth", action="store_true", default=False, help="Save depth PNG")
     parser.add_argument("--save_normal", action="store_true", default=False, help="Save normal PNG")
     parser.add_argument("--save_gs", action="store_true", default=True, help="Save Gaussians PLY")
-    parser.add_argument("--save_rendered", action="store_true", default=False, help="Save rendered video")
     parser.add_argument("--save_colmap", action="store_true", default=False, help="Save COLMAP sparse")
     # Conditioning flags
     parser.add_argument("--cond_pose", action="store_true", help="Use camera pose conditioning if available")
