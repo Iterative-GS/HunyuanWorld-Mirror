@@ -128,7 +128,7 @@ def process_scene(input_path, output_path, model, args):
         input_frames_dir = output_path / "input_frames"
         input_frames_dir.mkdir(exist_ok=True)
 
-        img_paths = select_frames_from_dl3dv(str(input_path), n=15, output_dir=str(input_frames_dir))
+        img_paths = select_frames_from_dl3dv(str(input_path), n=25, output_dir=str(input_frames_dir))
         if not img_paths:
             raise RuntimeError("❌ Failed to extract frames from video")
 
@@ -140,7 +140,7 @@ def process_scene(input_path, output_path, model, args):
         input_frames_dir = output_path / "input_frames"
         input_frames_dir.mkdir(exist_ok=True)
         print(f"📁 Processing directory: {input_path}")
-        img_paths = select_frames_from_dl3dv(str(input_path), n=15, output_dir=str(input_frames_dir))
+        img_paths = select_frames_from_dl3dv(str(input_path), n=25, output_dir=str(input_frames_dir))
         if not img_paths:
             raise RuntimeError("❌ Failed to extract frames from directory")
         print(f"✅ Loaded {len(img_paths)} images from {input_path}")
@@ -566,9 +566,9 @@ def main():
 
             print(f"\n🔄 Processing scene: {resolution}/{scene_hash}")
             total_scenes += 1
-            # if total_scenes > 100:
-            #     print("Reached processing limit of 100 scenes, stopping...")
-            #     break
+            if total_scenes > 100:
+                print("Reached processing limit of 100 scenes, stopping...")
+                break
             try:
                 process_scene(str(scene_dir), str(output_path), model, args)
                 processed_scenes += 1
