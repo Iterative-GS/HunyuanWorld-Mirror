@@ -111,6 +111,17 @@ def create_filter_mask(
     return final_mask
 
 
+def _frame_selection_kwargs(args):
+    return {
+        "n": args.max_frames,
+        "dedupe_overlap": args.dedupe_overlap,
+        "overlap_rot_deg": args.overlap_rot_deg,
+        "overlap_trans_frac_scene": args.overlap_trans_frac_scene,
+        "overlap_trans_frac_path": args.overlap_trans_frac_path,
+        "overlap_min_views": args.overlap_min_views,
+    }
+
+
 def process_scene(input_path, output_path, model, args):
     """
     Process a single scene: load images, run inference, save results.
@@ -128,7 +139,11 @@ def process_scene(input_path, output_path, model, args):
         input_frames_dir = output_path / "input_frames"
         input_frames_dir.mkdir(exist_ok=True)
 
-        img_paths = select_frames_from_dl3dv(str(input_path), n=25, output_dir=str(input_frames_dir))
+        img_paths = select_frames_from_dl3dv(
+            str(input_path),
+            output_dir=str(input_frames_dir),
+            **_frame_selection_kwargs(args),
+        )
         if not img_paths:
             raise RuntimeError("❌ Failed to extract frames from video")
 
@@ -140,7 +155,11 @@ def process_scene(input_path, output_path, model, args):
         input_frames_dir = output_path / "input_frames"
         input_frames_dir.mkdir(exist_ok=True)
         print(f"📁 Processing directory: {input_path}")
-        img_paths = select_frames_from_dl3dv(str(input_path), n=25, output_dir=str(input_frames_dir))
+        img_paths = select_frames_from_dl3dv(
+            str(input_path),
+            output_dir=str(input_frames_dir),
+            **_frame_selection_kwargs(args),
+        )
         if not img_paths:
             raise RuntimeError("❌ Failed to extract frames from directory")
         print(f"✅ Loaded {len(img_paths)} images from {input_path}")
@@ -500,6 +519,14 @@ def main():
     parser.add_argument("--cond_pose", action="store_true", help="Use camera pose conditioning if available")
     parser.add_argument("--cond_intrinsics", action="store_true", help="Use intrinsics conditioning if available")
     parser.add_argument("--cond_depth", action="store_true", help="Use depth conditioning if available")
+    # Frame selection and overlap deduplication
+    parser.add_argument("--max_frames", type=int, default=25, help="Max frames for initial pose-based selection")
+    parser.add_argument("--dedupe_overlap", action="store_true", default=True, help="Drop redundant views after selection (default: on)")
+    parser.add_argument("--no_dedupe_overlap", action="store_false", dest="dedupe_overlap", help="Disable overlap deduplication")
+    parser.add_argument("--overlap_rot_deg", type=float, default=10.0, help="Max rotation difference (deg) to count as overlap")
+    parser.add_argument("--overlap_trans_frac_scene", type=float, default=0.08, help="Translation threshold as fraction of scene scale")
+    parser.add_argument("--overlap_trans_frac_path", type=float, default=0.20, help="Translation threshold as fraction of path span so far")
+    parser.add_argument("--overlap_min_views", type=int, default=10, help="Minimum views to keep after overlap dedupe")
     args = parser.parse_args()
 
     # Print inference parameters
@@ -514,6 +541,13 @@ def main():
     print(f"    - Pose: {'✅' if args.cond_pose else '❌'}")
     print(f"    - Intrinsics: {'✅' if args.cond_intrinsics else '❌'}")
     print(f"    - Depth: {'✅' if args.cond_depth else '❌'}")
+    print(f"  - Frame selection:")
+    print(f"    - Max frames: {args.max_frames}")
+    print(f"    - Overlap dedupe: {'✅' if args.dedupe_overlap else '❌'}")
+    if args.dedupe_overlap:
+        print(f"    - Overlap rot deg: {args.overlap_rot_deg}")
+        print(f"    - Overlap trans frac (scene/path): {args.overlap_trans_frac_scene}/{args.overlap_trans_frac_path}")
+        print(f"    - Overlap min views: {args.overlap_min_views}")
 
     # 1) Init model - This requires internet access or the huggingface hub cache to be pre-downloaded
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

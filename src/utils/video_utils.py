@@ -235,7 +235,17 @@ def _select_frames_by_pose_constraints(poses, n):
     
     # Return indices sorted to preserve original temporal order in the video
     return sorted(selected_indices)
-def select_frames_from_dl3dv(dataset_dir, n=10, output_dir=None):
+def select_frames_from_dl3dv(
+    dataset_dir,
+    n=10,
+    output_dir=None,
+    *,
+    dedupe_overlap=True,
+    overlap_rot_deg=10.0,
+    overlap_trans_frac_scene=0.08,
+    overlap_trans_frac_path=0.20,
+    overlap_min_views=3,
+):
     """
     Select n frames from a DL3DV-10K dataset directory using pre-computed COLMAP poses.
     
@@ -323,13 +333,57 @@ def select_frames_from_dl3dv(dataset_dir, n=10, output_dir=None):
     
     # Select frames using pose constraints
     print(f"Selecting {n} frames by pose constraints...")
-    selected_indices = _select_frames_by_pose_constraints(poses, n)
-    
+    initial_indices = _select_frames_by_pose_constraints(poses, n)
+    selected_indices = list(initial_indices)
+    drop_log = []
+
+    if dedupe_overlap and len(selected_indices) > 1:
+        from src.utils.pose_overlap import dedupe_frames_by_pose_overlap
+
+        print(
+            f" Deduplicating overlapping views (rot<={overlap_rot_deg}°, "
+            f"trans_frac_scene={overlap_trans_frac_scene}, trans_frac_path={overlap_trans_frac_path})..."
+        )
+        selected_indices, drop_log = dedupe_frames_by_pose_overlap(
+            selected_indices,
+            poses,
+            rot_deg_thresh=overlap_rot_deg,
+            frac_scene=overlap_trans_frac_scene,
+            frac_path=overlap_trans_frac_path,
+            min_kept_views=overlap_min_views,
+        )
+        print(
+            f"   Overlap dedupe: kept {len(selected_indices)}/{len(initial_indices)} frames "
+            f"(dropped {len(drop_log)})"
+        )
+        for rec in drop_log:
+            print(
+                f"     dropped idx={rec['index']} (closest_kept={rec.get('closest_kept')}, "
+                f"rot={rec.get('rot_deg', 0):.2f}°, trans={rec.get('trans_dist', 0):.4f}, "
+                f"thresh={rec.get('trans_thresh', 0):.4f})"
+            )
+
     # Copy selected frames to output directory
     if output_dir is None:
         output_dir = dataset_dir / "selected_frames"
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    if dedupe_overlap:
+        selection_meta = {
+            "pose_source": "transforms.json transform_matrix",
+            "initial_selection": initial_indices,
+            "final_selection": selected_indices,
+            "dropped": drop_log,
+            "overlap_rot_deg": overlap_rot_deg,
+            "overlap_trans_frac_scene": overlap_trans_frac_scene,
+            "overlap_trans_frac_path": overlap_trans_frac_path,
+            "overlap_min_views": overlap_min_views,
+        }
+        selection_meta_path = output_dir / "frame_selection.json"
+        with open(selection_meta_path, "w", encoding="utf-8") as f:
+            json.dump(selection_meta, f, indent=2)
+        print(f"   Wrote frame selection log to {selection_meta_path}")
     
     print(f"\n Saving selected frames to {output_dir}...")
     selected_paths = []
