@@ -114,11 +114,19 @@ def create_filter_mask(
 def _frame_selection_kwargs(args):
     return {
         "n": args.max_frames,
+        "frame_selection": args.frame_selection,
         "dedupe_overlap": args.dedupe_overlap,
         "overlap_rot_deg": args.overlap_rot_deg,
         "overlap_trans_frac_scene": args.overlap_trans_frac_scene,
         "overlap_trans_frac_path": args.overlap_trans_frac_path,
         "overlap_min_views": args.overlap_min_views,
+        "traj_step_frac_scene": args.traj_step_frac_scene,
+        "traj_step_frac_path": args.traj_step_frac_path,
+        "traj_min_step_abs": args.traj_min_step_abs,
+        "traj_smooth_window": args.traj_smooth_window,
+        "traj_min_rot_deg": args.traj_min_rot_deg,
+        "traj_redundant_trans_frac_scene": args.traj_redundant_trans_frac_scene,
+        "traj_redundant_rot_deg": args.traj_redundant_rot_deg,
     }
 
 
@@ -521,6 +529,58 @@ def main():
     parser.add_argument("--cond_depth", action="store_true", help="Use depth conditioning if available")
     # Frame selection and overlap deduplication
     parser.add_argument("--max_frames", type=int, default=25, help="Max frames for initial pose-based selection")
+    parser.add_argument(
+        "--frame_selection",
+        type=str,
+        default="trajectory",
+        choices=["trajectory", "legacy"],
+        help="Frame selection mode (default: trajectory)",
+    )
+
+    # Trajectory sampling parameters
+    parser.add_argument(
+        "--traj_step_frac_scene",
+        type=float,
+        default=0.05,
+        help="Trajectory step size as a fraction of scene scale (default: 0.05)",
+    )
+    parser.add_argument(
+        "--traj_step_frac_path",
+        type=float,
+        default=None,
+        help="Trajectory step size as a fraction of total path length (optional)",
+    )
+    parser.add_argument(
+        "--traj_min_step_abs",
+        type=float,
+        default=1e-3,
+        help="Minimum trajectory step size in pose translation units",
+    )
+    parser.add_argument(
+        "--traj_smooth_window",
+        type=int,
+        default=0,
+        help="Moving average window over positions before arc-length (0 disables)",
+    )
+    parser.add_argument(
+        "--traj_min_rot_deg",
+        type=float,
+        default=None,
+        help="Optional min rotation (deg) for accepting a sample when translation is small",
+    )
+    parser.add_argument(
+        "--traj_redundant_trans_frac_scene",
+        type=float,
+        default=0.02,
+        help="Redundancy gate: translation <= frac*scene_scale counts as redundant if rotation also small",
+    )
+    parser.add_argument(
+        "--traj_redundant_rot_deg",
+        type=float,
+        default=7.5,
+        help="Redundancy gate: rotation <= this deg counts as redundant if translation also small",
+    )
+
     parser.add_argument("--dedupe_overlap", action="store_true", default=True, help="Drop redundant views after selection (default: on)")
     parser.add_argument("--no_dedupe_overlap", action="store_false", dest="dedupe_overlap", help="Disable overlap deduplication")
     parser.add_argument("--overlap_rot_deg", type=float, default=10.0, help="Max rotation difference (deg) to count as overlap")
@@ -542,8 +602,17 @@ def main():
     print(f"    - Intrinsics: {'✅' if args.cond_intrinsics else '❌'}")
     print(f"    - Depth: {'✅' if args.cond_depth else '❌'}")
     print(f"  - Frame selection:")
+    print(f"    - Mode: {args.frame_selection}")
     print(f"    - Max frames: {args.max_frames}")
-    print(f"    - Overlap dedupe: {'✅' if args.dedupe_overlap else '❌'}")
+    if args.frame_selection == 'trajectory':
+        print(f"    - Traj step frac scene: {args.traj_step_frac_scene}")
+        print(f"    - Traj step frac path: {args.traj_step_frac_path}")
+        print(f"    - Traj smooth window: {args.traj_smooth_window}")
+        print(f"    - Traj min step abs: {args.traj_min_step_abs}")
+        print(f"    - Traj min rot deg: {args.traj_min_rot_deg}")
+        print(f"    - Traj redundancy trans frac scene: {args.traj_redundant_trans_frac_scene}")
+        print(f"    - Traj redundancy rot deg: {args.traj_redundant_rot_deg}")
+    print(f"    - Global overlap dedupe: {'✅' if args.dedupe_overlap else '❌'}")
     if args.dedupe_overlap:
         print(f"    - Overlap rot deg: {args.overlap_rot_deg}")
         print(f"    - Overlap trans frac (scene/path): {args.overlap_trans_frac_scene}/{args.overlap_trans_frac_path}")

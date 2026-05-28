@@ -5,10 +5,161 @@ Video utilities for visualization.
 
 import os
 from pathlib import Path
-import cv2
+try:
+    import cv2
+except Exception:
+    cv2 = None
 import numpy as np
 import subprocess
-from PIL import Image
+try:
+    from PIL import Image
+except Exception:
+    Image = None
+
+def _rotation_geodesic_deg(R_a: np.ndarray, R_b: np.ndarray) -> float:
+    R_rel = R_a.T @ R_b
+    trace = float(np.trace(R_rel))
+    angle_rad = np.arccos(np.clip((trace - 1.0) / 2.0, -1.0, 1.0))
+    return float(np.rad2deg(angle_rad))
+
+
+def _select_frames_by_trajectory_arclength(
+    poses,
+    max_frames: int,
+    *,
+    traj_step_frac_scene: float | None = 0.05,
+    traj_step_frac_path: float | None = None,
+    traj_min_step_abs: float = 1e-3,
+    traj_smooth_window: int = 0,
+    traj_min_rot_deg: float | None = None,
+    traj_redundant_trans_frac_scene: float = 0.02,
+    traj_redundant_rot_deg: float = 7.5,
+):
+    """
+    Select frames by sampling roughly uniformly along the camera trajectory (arc-length)
+    in time order, with a local redundancy gate.
+
+    Returns:
+        (selected_indices, meta)
+    """
+    import math
+    from src.utils.pose_overlap import compute_scene_scale
+
+    frame_indices = sorted(poses.keys())
+    if not frame_indices:
+        return [], {"reason": "no_poses"}
+
+    # Positions in time order
+    pos = np.stack([poses[i][:3, 3].astype(np.float64) for i in frame_indices], axis=0)
+
+    if traj_smooth_window and traj_smooth_window > 1:
+        w = int(traj_smooth_window)
+        half = w // 2
+        pos_smooth = pos.copy()
+        for i in range(len(pos)):
+            lo = max(0, i - half)
+            hi = min(len(pos), i + half + 1)
+            pos_smooth[i] = pos[lo:hi].mean(axis=0)
+        pos_use = pos_smooth
+    else:
+        pos_use = pos
+
+    # Arc-length along trajectory
+    deltas = np.linalg.norm(pos_use[1:] - pos_use[:-1], axis=1)
+    s = np.concatenate([[0.0], np.cumsum(deltas)])
+    total_path_len = float(s[-1])
+
+    scene_scale = float(compute_scene_scale(pos_use))
+    eps = 1e-9
+
+    # Determine step size
+    if traj_step_frac_scene is not None:
+        step = float(traj_step_frac_scene) * max(scene_scale, eps)
+        step_mode = "scene_scale"
+    elif traj_step_frac_path is not None:
+        step = float(traj_step_frac_path) * max(total_path_len, eps)
+        step_mode = "path_length"
+    else:
+        if max_frames >= 2:
+            step = max(total_path_len / float(max_frames - 1), eps)
+        else:
+            step = math.inf
+        step_mode = "derived_from_max_frames"
+
+    step = max(step, float(traj_min_step_abs))
+
+    # Degenerate: no motion => uniform-in-time indices
+    if total_path_len <= eps:
+        if max_frames <= 1:
+            sel = [frame_indices[0]]
+        else:
+            # Evenly spaced in time
+            k = min(max_frames, len(frame_indices))
+            picks = np.linspace(0, len(frame_indices) - 1, k)
+            sel = [frame_indices[int(round(x))] for x in picks]
+            sel = sorted(set(sel), key=sel.index)
+        meta = {
+            "mode": "trajectory",
+            "reason": "degenerate_path_len",
+            "total_path_length": total_path_len,
+            "scene_scale": scene_scale,
+            "trajectory_step": step,
+            "step_mode": step_mode,
+            "redundancy_gate_applied_count": 0,
+        }
+        return sel, meta
+
+    # Greedy arc-length sampling with redundancy gate
+    selected = [frame_indices[0]]
+    redundancy_skips = 0
+    next_target = step
+
+    for idx_in_seq in range(1, len(frame_indices)):
+        if len(selected) >= max_frames:
+            break
+
+        if float(s[idx_in_seq]) < next_target:
+            continue
+
+        cand_idx = frame_indices[idx_in_seq]
+        last_idx = selected[-1]
+
+        # Local redundancy gate vs most recent kept
+        trans_redundant = float(traj_redundant_trans_frac_scene) * max(scene_scale, eps)
+        dtrans = float(np.linalg.norm(poses[cand_idx][:3, 3] - poses[last_idx][:3, 3]))
+        drot = _rotation_geodesic_deg(poses[last_idx][:3, :3], poses[cand_idx][:3, :3])
+
+        if dtrans <= trans_redundant and drot <= float(traj_redundant_rot_deg):
+            redundancy_skips += 1
+            continue
+
+        if traj_min_rot_deg is not None and drot < float(traj_min_rot_deg) and dtrans < step:
+            redundancy_skips += 1
+            continue
+
+        selected.append(cand_idx)
+        next_target += step
+
+    # Always include last frame if there's room and it's not already included
+    if len(selected) < max_frames and frame_indices[-1] not in selected:
+        selected.append(frame_indices[-1])
+
+    meta = {
+        "mode": "trajectory",
+        "total_path_length": total_path_len,
+        "scene_scale": scene_scale,
+        "trajectory_step": step,
+        "step_mode": step_mode,
+        "traj_step_frac_scene": traj_step_frac_scene,
+        "traj_step_frac_path": traj_step_frac_path,
+        "traj_min_step_abs": traj_min_step_abs,
+        "traj_smooth_window": traj_smooth_window,
+        "traj_min_rot_deg": traj_min_rot_deg,
+        "traj_redundant_trans_frac_scene": traj_redundant_trans_frac_scene,
+        "traj_redundant_rot_deg": traj_redundant_rot_deg,
+        "redundancy_gate_applied_count": redundancy_skips,
+    }
+    return selected, meta
 
 
 def video_to_image_frames(input_video_path, save_directory=None, fps=1):
@@ -240,11 +391,20 @@ def select_frames_from_dl3dv(
     n=10,
     output_dir=None,
     *,
+    frame_selection: str = "trajectory",
     dedupe_overlap=True,
     overlap_rot_deg=10.0,
     overlap_trans_frac_scene=0.08,
     overlap_trans_frac_path=0.20,
     overlap_min_views=3,
+    # Trajectory selection params
+    traj_step_frac_scene: float | None = 0.05,
+    traj_step_frac_path: float | None = None,
+    traj_min_step_abs: float = 1e-3,
+    traj_smooth_window: int = 0,
+    traj_min_rot_deg: float | None = None,
+    traj_redundant_trans_frac_scene: float = 0.02,
+    traj_redundant_rot_deg: float = 7.5,
 ):
     """
     Select n frames from a DL3DV-10K dataset directory using pre-computed COLMAP poses.
@@ -331,36 +491,76 @@ def select_frames_from_dl3dv(
     
     print(f"Extracted {len(poses)} valid camera poses")
     
-    # Select frames using pose constraints
-    print(f"Selecting {n} frames by pose constraints...")
-    initial_indices = _select_frames_by_pose_constraints(poses, n)
-    selected_indices = list(initial_indices)
+    initial_indices = []
+    selected_indices = []
     drop_log = []
+    traj_meta = {}
 
-    if dedupe_overlap and len(selected_indices) > 1:
-        from src.utils.pose_overlap import dedupe_frames_by_pose_overlap
+    if frame_selection == "legacy":
+        # Select frames using pose constraints
+        print(f"Selecting {n} frames by pose constraints...")
+        initial_indices = _select_frames_by_pose_constraints(poses, n)
+        selected_indices = list(initial_indices)
 
-        print(
-            f" Deduplicating overlapping views (rot<={overlap_rot_deg}°, "
-            f"trans_frac_scene={overlap_trans_frac_scene}, trans_frac_path={overlap_trans_frac_path})..."
-        )
-        selected_indices, drop_log = dedupe_frames_by_pose_overlap(
-            selected_indices,
-            poses,
-            rot_deg_thresh=overlap_rot_deg,
-            frac_scene=overlap_trans_frac_scene,
-            frac_path=overlap_trans_frac_path,
-            min_kept_views=overlap_min_views,
-        )
-        print(
-            f"   Overlap dedupe: kept {len(selected_indices)}/{len(initial_indices)} frames "
-            f"(dropped {len(drop_log)})"
-        )
-        for rec in drop_log:
+        if dedupe_overlap and len(selected_indices) > 1:
+            from src.utils.pose_overlap import dedupe_frames_by_pose_overlap
+
             print(
-                f"     dropped idx={rec['index']} (closest_kept={rec.get('closest_kept')}, "
-                f"rot={rec.get('rot_deg', 0):.2f}°, trans={rec.get('trans_dist', 0):.4f}, "
-                f"thresh={rec.get('trans_thresh', 0):.4f})"
+                f" Deduplicating overlapping views (rot<={overlap_rot_deg}°, "
+                f"trans_frac_scene={overlap_trans_frac_scene}, trans_frac_path={overlap_trans_frac_path})..."
+            )
+            selected_indices, drop_log = dedupe_frames_by_pose_overlap(
+                selected_indices,
+                poses,
+                rot_deg_thresh=overlap_rot_deg,
+                frac_scene=overlap_trans_frac_scene,
+                frac_path=overlap_trans_frac_path,
+                min_kept_views=overlap_min_views,
+            )
+            print(
+                f"   Overlap dedupe: kept {len(selected_indices)}/{len(initial_indices)} frames "
+                f"(dropped {len(drop_log)})"
+            )
+            for rec in drop_log:
+                print(
+                    f"     dropped idx={rec['index']} (closest_kept={rec.get('closest_kept')}, "
+                    f"rot={rec.get('rot_deg', 0):.2f}°, trans={rec.get('trans_dist', 0):.4f}, "
+                    f"thresh={rec.get('trans_thresh', 0):.4f})"
+                )
+    else:
+        print(f"Selecting up to {n} frames by trajectory arc-length sampling...")
+        selected_indices, traj_meta = _select_frames_by_trajectory_arclength(
+            poses,
+            n,
+            traj_step_frac_scene=traj_step_frac_scene,
+            traj_step_frac_path=traj_step_frac_path,
+            traj_min_step_abs=traj_min_step_abs,
+            traj_smooth_window=traj_smooth_window,
+            traj_min_rot_deg=traj_min_rot_deg,
+            traj_redundant_trans_frac_scene=traj_redundant_trans_frac_scene,
+            traj_redundant_rot_deg=traj_redundant_rot_deg,
+        )
+        initial_indices = list(selected_indices)
+
+        # In trajectory mode, overlap dedupe is optional but off by default upstream.
+        if dedupe_overlap and len(selected_indices) > 1:
+            from src.utils.pose_overlap import dedupe_frames_by_pose_overlap
+
+            print(
+                f" Optional global overlap dedupe (rot<={overlap_rot_deg}°, "
+                f"trans_frac_scene={overlap_trans_frac_scene}, trans_frac_path={overlap_trans_frac_path})..."
+            )
+            selected_indices, drop_log = dedupe_frames_by_pose_overlap(
+                selected_indices,
+                poses,
+                rot_deg_thresh=overlap_rot_deg,
+                frac_scene=overlap_trans_frac_scene,
+                frac_path=overlap_trans_frac_path,
+                min_kept_views=overlap_min_views,
+            )
+            print(
+                f"   Overlap dedupe: kept {len(selected_indices)}/{len(initial_indices)} frames "
+                f"(dropped {len(drop_log)})"
             )
 
     # Copy selected frames to output directory
@@ -369,21 +569,25 @@ def select_frames_from_dl3dv(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if dedupe_overlap:
-        selection_meta = {
-            "pose_source": "transforms.json transform_matrix",
-            "initial_selection": initial_indices,
-            "final_selection": selected_indices,
-            "dropped": drop_log,
-            "overlap_rot_deg": overlap_rot_deg,
-            "overlap_trans_frac_scene": overlap_trans_frac_scene,
-            "overlap_trans_frac_path": overlap_trans_frac_path,
-            "overlap_min_views": overlap_min_views,
-        }
-        selection_meta_path = output_dir / "frame_selection.json"
-        with open(selection_meta_path, "w", encoding="utf-8") as f:
-            json.dump(selection_meta, f, indent=2)
-        print(f"   Wrote frame selection log to {selection_meta_path}")
+    selection_meta = {
+        "pose_source": "transforms.json transform_matrix",
+        "frame_selection_mode": frame_selection,
+        "initial_selection": initial_indices,
+        "final_selection": selected_indices,
+        "dropped": drop_log,
+        "final_view_count": len(selected_indices),
+        "dedupe_overlap": bool(dedupe_overlap),
+        "overlap_rot_deg": overlap_rot_deg,
+        "overlap_trans_frac_scene": overlap_trans_frac_scene,
+        "overlap_trans_frac_path": overlap_trans_frac_path,
+        "overlap_min_views": overlap_min_views,
+        "trajectory": traj_meta,
+        "pose_units_note": "All translation thresholds/steps are in transforms.json translation units.",
+    }
+    selection_meta_path = output_dir / "frame_selection.json"
+    with open(selection_meta_path, "w", encoding="utf-8") as f:
+        json.dump(selection_meta, f, indent=2)
+    print(f"   Wrote frame selection log to {selection_meta_path}")
     
     print(f"\n Saving selected frames to {output_dir}...")
     selected_paths = []
